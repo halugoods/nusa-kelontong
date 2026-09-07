@@ -33,7 +33,7 @@
          benar-benar terhapus, install baru = fresh → login Google → dialog
          muncul. Data tidak hilang — cloud backup tetap ada. -->
     <application
-        android:label="NUSA Kelontong"
+        android:label="NUSA Apotek"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"

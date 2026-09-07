@@ -7,17 +7,17 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:116430341615:android:764fd64149bc8e2034e21a",
+        "mobilesdk_app_id": "1:116430341615:android:d7d8a64b8fe0881b34e21a",
         "android_client_info": {
-          "package_name": "com.nusa.kelontong"
+          "package_name": "com.nusa.apotek"
         }
       },
       "oauth_client": [
         {
-          "client_id": "116430341615-7kub9ap60lb162unrtqdsejm8olh66nb.apps.googleusercontent.com",
+          "client_id": "116430341615-nfnh2dpt3ccn21g7dvls791rg00d3hla.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.nusa.kelontong",
+            "package_name": "com.nusa.apotek",
             "certificate_hash": "551bf088ef620c486e7f18ddddd7c8305b234838"
           }
         },

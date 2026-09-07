@@ -743,22 +743,9 @@ class AppDatabase extends _$AppDatabase {
         // v2.2.57: link appointment → transaksi (omset & komisi per Stylist).
         await _addColumnIfMissing(m, 'appointments', 'transaction_id', 'INTEGER');
       }
-      if (from < 49) {
-        // v2.2.57+130 (A1.4): pembersihan BASE64 lama. Setelah hydrate +
-        // kompaksi berjalan (main.dart), beberapa baris mungkin masih punya
-        // base64 karena file fisiknya belum ada saat kompaksi (mis. device
-        // offline). Kalau imagePath/photoPath sudah ada, base64 aman di-nol kan
-        // — DB mengecil drastis, arsip backup ringan, tidak bom egress.
-        // Idempoten: WHERE image_base64 IS NOT NULL AND image_path IS NOT NULL.
-        await m.database.customStatement(
-          'UPDATE products SET image_base64 = NULL '
-          'WHERE image_base64 IS NOT NULL AND image_path IS NOT NULL',
-        );
-        await m.database.customStatement(
-          'UPDATE employees SET photo_base64 = NULL '
-          'WHERE photo_base64 IS NOT NULL AND photo_path IS NOT NULL',
-        );
-      }
+      // v2.2.57+130: base64 TIDAK di-clear. User yang uninstall-reinstall akan
+      // kehilangan gambar jika base64 dihapus — backup ringan lebih baik dari
+      // data user hilang. Gambar tetap ada di DB sampai di-pack ke arsip.
     },
   );
 }

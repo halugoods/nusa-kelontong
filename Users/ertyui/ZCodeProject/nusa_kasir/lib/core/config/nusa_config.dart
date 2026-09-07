@@ -7,8 +7,8 @@ import 'package:nusa_kasir/core/dev/variant_data.dart';
 abstract class NusaConfig {
   static const String appName = "NUSA";
   static const String brandName = "NUSA";
-		static String _productId = "nusa-kelontong";
-		static String _appSubtitle = "Aplikasi Kasir untuk Toko Kelontong";
+		static String _productId = "nusa-apotek";
+		static String _appSubtitle = "Aplikasi Kasir untuk Apotek & Farmasi";
   static const String appVersion = "2.2.57";
   /// v2.2.57+130 (A1.6): build number kini SEEDABLE saat runtime dari
   /// PackageInfo (dipanggil main() sebelum UI). Dulu const int — dibump saat
@@ -19,10 +19,10 @@ abstract class NusaConfig {
   static void seedBuildNumber(int build) {
     if (build > 0) appBuildNumber = build;
   }
-		static String _githubRepo = "halugoods/nusa-kelontong";
+		static String _githubRepo = "halugoods/nusa-apotek";
 		static const String landingPageUrl = "https://nusa-online.vercel.app";
-		static String _whatsappOrder = "https://wa.me/628976280303?text=Halo%2C%20saya%20mau%20beli%20NUSA%20Kelontong";
-		static String _applicationId = "com.nusa.kelontong";
+		static String _whatsappOrder = "https://wa.me/628976280303?text=Halo%2C%20saya%20mau%20beli%20NUSA%20Apotek";
+		static String _applicationId = "com.nusa.apotek";
   // v2.2.57+130: Supabase diganti Cloudflare worker (CloudGateway).
   // cloudBaseUrl overridable per-varian via --dart-define (_build_all.py).
   static const String cloudBaseUrl = String.fromEnvironment('NUSA_CLOUD_BASE', defaultValue: 'https://nusa-cloud.halugoods-indonesia.workers.dev');
@@ -156,9 +156,9 @@ abstract class NusaConfig {
   // ── Brand colors (build-time defaults, patched by _build_all.py) ──
   // These remain const for broad compatibility with const constructors
   // across 50+ widget files. Theme switching uses overrides below.
-  static const Color primaryColor = const Color(0xFFF97316);
-  static const Color primaryDark = const Color(0xFFEA580C);
-  static const Color primarySoft = const Color(0xFFFFF7ED);
+  static const Color primaryColor = const Color(0xFF10B981);
+  static const Color primaryDark = const Color(0xFF059669);
+  static const Color primarySoft = const Color(0xFFECFDF5);
   static const Color backgroundColor = const Color(0xFFF7F7F9);
 
   // ── Runtime theme override (set by user via Settings → Tema Warna) ──
@@ -334,25 +334,25 @@ abstract class NusaConfig {
   // ── Category maps (single source across all screens) ──
   // Build-time defaults (patched by _build_all.py)
 		static Map<String, String> _catEmoji = {
-		  'Sembako': '🍚',
-		  'Makanan': '🍜',
-		  'Minuman': '🥤',
-		  'Perlengkapan': '🧹',
+		  'Obat Bebas': '💊',
+		  'Obat Resep': '📋',
+		  'Vitamin': '💪',
+		  'Alkes': '🩺',
 		  'Lainnya': '📦',
 		};
 		  static Map<String, List<Color>> _catGradients = {
-		    'Sembako': [Color(0xFFFFEDD5), Color(0xFFFED7AA), Color(0xFFFFF7ED)],
-		    'Makanan': [Color(0xFFFEF3C7), Color(0xFFFDE68A), Color(0xFFFEF9C3)],
-		    'Minuman': [Color(0xFFDBEAFE), Color(0xFFBFDBFE), Color(0xFFEFF6FF)],
-		    'Perlengkapan': [Color(0xFFDCFCE7), Color(0xFFBBF7D0), Color(0xFFF0FDF4)],
+		    'Obat Bebas': [Color(0xFFDCFCE7), Color(0xFFBBF7D0), Color(0xFFF0FDF4)],
+		    'Obat Resep': [Color(0xFFDBEAFE), Color(0xFFBFDBFE), Color(0xFFEFF6FF)],
+		    'Vitamin': [Color(0xFFFEF3C7), Color(0xFFFDE68A), Color(0xFFFEF9C3)],
+		    'Alkes': [Color(0xFFFEE2E2), Color(0xFFFECACA), Color(0xFFFEF2F2)],
 		    'Lainnya': [Color(0xFFF3E8FF), Color(0xFFE9D5FF), Color(0xFFFAF5FF)],
 		  };
 		  static Map<String, IconData> _catIcons = {
 		    'Semua': Icons.grid_view_rounded,
-		    'Sembako': Icons.rice_bowl_rounded,
-		    'Makanan': Icons.restaurant_rounded,
-		    'Minuman': Icons.local_drink_rounded,
-		    'Perlengkapan': Icons.cleaning_services_rounded,
+		    'Obat Bebas': Icons.medication_rounded,
+		    'Obat Resep': Icons.description_rounded,
+		    'Vitamin': Icons.fitness_center_rounded,
+		    'Alkes': Icons.monitor_heart_rounded,
 		    'Lainnya': Icons.category_rounded,
 		  };
 
@@ -423,10 +423,10 @@ abstract class NusaConfig {
 
   /// Build-time hints (patched by _build_all.py per variant).
   static Map<String, dynamic> variantHints = {
-    'productName': 'Cth: Indomie Goreng',
-    'productCategory': 'Cth: Sembako',
+    'productName': 'Cth: Paracetamol 500mg',
+    'productCategory': 'Cth: Obat',
     'barcode': 'contoh: 8991002101234',
-    'employeeName': 'Cth: Budi Santoso',
+    'employeeName': 'Cth: Apoteker Dewi',
   };
 
   /// Menu tambahan spesifik domain (bersifat aditif ke dashboard grid).

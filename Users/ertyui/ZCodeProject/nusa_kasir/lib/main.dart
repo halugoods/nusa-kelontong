@@ -367,6 +367,60 @@ Future<void> _hydrateImagesFromDb() async {
 /// v2.2.57+130 (A1.2): relink foto produk & karyawan dari bucket setelah
 /// restore. Arsip backup baru (+130) TIDAK mengemas file gambar — DB-only.
 /// Di device baru / setelah clear data, `imagePath`/`photoPath` di DB menunjuk
+/// v2.2.57+130 (FIX): upload semua base64 di DB ke R2. Mencegah data loss
+/// saat user uninstall — tanpa ini gambar hilang permanen karena base64
+/// di-clear saat kompaksi dan R2 kosong.
+Future<void> _uploadBase64ImagesToR2() async {
+  try {
+    final uid = await SecureStore.resolveCanonicalUid();
+    if (uid == null) return;
+    final db = AppDatabase();
+    var uploaded = 0;
+
+    // Produk
+    final prods = await db.select(db.products).get();
+    for (final pr in prods) {
+      final b64 = pr.imageBase64;
+      if (b64 == null || b64.isEmpty) continue;
+      final path = pr.imagePath;
+      if (path == null || path.isEmpty) continue;
+      final filename = p.basename(path);
+      if (!filename.startsWith('product_')) continue;
+      try {
+        final bytes = base64Decode(b64);
+        final remotePath = '$uid/${NusaConfig.productId}/products/$filename';
+        final ok = await CloudGateway.shared.storageUpload(
+          'nusa-images', remotePath, bytes,
+          contentType: 'image/jpeg', upsert: true,
+        );
+        if (ok) uploaded++;
+      } catch (_) {}
+    }
+
+    // Karyawan
+    final emps = await db.select(db.employees).get();
+    for (final em in emps) {
+      final b64 = em.photoBase64;
+      if (b64 == null || b64.isEmpty) continue;
+      final path = em.photoPath;
+      if (path == null || path.isEmpty) continue;
+      final filename = p.basename(path);
+      if (!filename.startsWith('photo_')) continue;
+      try {
+        final bytes = base64Decode(b64);
+        final remotePath = '$uid/${NusaConfig.productId}/employees/$filename';
+        final ok = await CloudGateway.shared.storageUpload(
+          'nusa-images', remotePath, bytes,
+          contentType: 'image/jpeg', upsert: true,
+        );
+        if (ok) uploaded++;
+      } catch (_) {}
+    }
+
+    if (uploaded > 0) debugPrint('[ImageSync] uploaded $uploaded images to R2');
+  } catch (_) {}
+}
+
 /// file lokal yang tidak ada, dan base64 sudah kosong (kompaksi A1.3) → tanpa
 /// fungsi ini foto hilang. Sini tarik gambar dari `nusa-images/{uid}/
 /// {productId}/{products|employees}/{basename}` dengan NAMA FILE ASLI (bucket
@@ -509,6 +563,14 @@ void main() async {
     // UI langsung tampil. Idempoten: hanya yang file-nya hilang diproses.
     try {
       await _hydrateImagesFromDb();
+    } catch (_) {}
+
+    // v2.2.57+130 (FIX): upload base64 ke R2. Selama ini gambar TIDAK PERNAH
+    // di-upload ke cloud — cuma base64 di DB. Kalau user uninstall, gambar
+    // hilang permanen. Loop ini scan semua base64 dan upload ke R2 supaya
+    // nanti bisa di-relink setelah restore.
+    try {
+      await _uploadBase64ImagesToR2();
     } catch (_) {}
 
     // v2.2.57+130 (A1.2): relink foto produk dari bucket nusa-images untuk
