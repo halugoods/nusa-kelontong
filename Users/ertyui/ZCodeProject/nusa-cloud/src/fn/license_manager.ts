@@ -163,7 +163,7 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
           product,
           mode,
           tier,
-          tier === 'trial' ? 'Trial' : 'Generated',
+          tier === 'trial' ? 'Trial' : 'Active',
           ownerEmail,
           trialExpires,
         )
@@ -376,7 +376,7 @@ export async function handleAdd(ctx: FnContext, params: Params): Promise<Respons
     await ctx.env.DB.prepare(
       'INSERT INTO licenses (id, key, serial, product, status, owner_email) VALUES (?, ?, ?, ?, ?, ?)'
     )
-      .bind(uid(), String(key).toUpperCase(), String(serial), product ?? 'nusa-kasir', 'Generated', owner_email ?? null)
+      .bind(uid(), String(key).toUpperCase(), String(serial), product ?? 'nusa-kasir', 'Active', owner_email ?? null)
       .run();
   } catch (e: any) {
     // PG 23505 (unique_violation) → D1: "UNIQUE constraint failed"
