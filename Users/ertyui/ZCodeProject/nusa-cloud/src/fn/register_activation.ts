@@ -117,12 +117,33 @@ export async function handleRegisterActivation(ctx: FnContext, params: Params): 
       // (Dulu difilter per product, yang menyisakan user yang beli lisensi
       // satu varian tapi membuka varian lain.)
       const ownedRes = await env.DB.prepare(
-        `SELECT id, key, serial, status, google_user_id, expires_at, tier, product
+        `SELECT id, key, serial, status, google_user_id, owner_email, expires_at, tier, product
          FROM licenses WHERE google_user_id = ? ORDER BY created_at DESC LIMIT 5`
       )
         .bind(googleUserId)
         .all<Row>();
-      const owned = ownedRes.results ?? [];
+      let owned = ownedRes.results ?? [];
+
+      // v2.2.57+131: kalau tidak ketemu by Google ID, cek by owner_email
+      // (lisensi generated/admin-linked tapi belum pernah di-activate user).
+      // Kalau email cocok → link google_user_id ke lisensi + anggap milik akun.
+      if (owned.length === 0) {
+        const emailMatch = await env.DB.prepare(
+          `SELECT id, key, serial, status, google_user_id, owner_email, expires_at, tier, product
+           FROM licenses WHERE LOWER(owner_email) = LOWER(?) AND google_user_id IS NULL
+           AND status NOT IN ('Cancelled', 'Expired') ORDER BY created_at DESC LIMIT 1`
+        )
+          .bind(googleUserId) // googleUserId bisa berupa email untuk Lite
+          .first<Row>();
+        if (emailMatch) {
+          // Link Google ID ke lisensi ini
+          await env.DB.prepare('UPDATE licenses SET google_user_id = ? WHERE id = ?')
+            .bind(googleUserId, emailMatch.id)
+            .run();
+          emailMatch.google_user_id = googleUserId;
+          owned = [emailMatch];
+        }
+      }
 
       // Utamakan lisensi terbaru yang tidak diblokir; lisensi blocked tetap
       // diambil supaya bisa dilaporkan dengan pesan bermakna, bukan diam-diam
