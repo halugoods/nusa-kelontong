@@ -114,7 +114,13 @@ class _BackupSheetBody extends StatelessWidget {
         final unpacked = await unpackInIsolate(bytes);
         for (final entry in unpacked.entries) {
           if (entry.key == 'nusa_kasir.sqlite') {
+            // v2.2.57+131: hapus sidecar WAL/SHM dulu — kalau tidak,
+            // SQLite replay WAL lama di atas DB baru → data corrupt/produk
+            // sebagian hilang (user complain "produk cuma 2").
             final dbFile = File(p.join(dir.path, 'nusa_kasir.sqlite'));
+            for (final sidecar in ['${dbFile.path}-wal', '${dbFile.path}-shm', '${dbFile.path}-journal']) {
+              try { await File(sidecar).delete(); } catch (_) {}
+            }
             await dbFile.writeAsBytes(entry.value, flush: true);
           } else if (entry.key == 'feature_toggles.json') {
             final json = utf8.decode(entry.value);
@@ -137,6 +143,11 @@ class _BackupSheetBody extends StatelessWidget {
         final dbFile = File(p.join(dir.path, 'nusa_kasir.sqlite'));
         await dbFile.writeAsBytes(bytes, flush: true);
       }
+
+      // v2.2.57+131: tandai lastCloudSeen = now supaya autosync tidak
+      // menimpa DB yang baru di-restore dengan backup cloud lama/kosong
+      // di launch berikutnya (akar bug "produk cuma 2 setelah restore").
+      await SecureStore.setLastCloudSeen(DateTime.now());
 
       ref.invalidate(databaseProvider);
       if (ctx.mounted) Navigator.of(ctx).pop();

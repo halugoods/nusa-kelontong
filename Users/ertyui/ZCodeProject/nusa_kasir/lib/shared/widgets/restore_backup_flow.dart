@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/activation/activation_repository.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/shared/widgets/top_toast.dart';
 import 'package:nusa_kasir/data/repositories/settings_repository.dart';
@@ -170,6 +171,9 @@ class RestoreBackupFlow {
     final ok = await repo.restoreDirect();
     if (ok && context.mounted) {
       TopToast.success(context, 'Data berhasil dipulihkan');
+      // v2.2.57+131: tandai lastCloudSeen = now supaya autosync tidak
+      // menimpa DB yang baru di-restore di launch berikutnya.
+      await SecureStore.setLastCloudSeen(DateTime.now());
       // Repair PIN length SEBELUM navigasi — fix PIN lama (4-digit) ke 6-digit
       // supaya user bisa login setelah restore.
       await _repairPinLengthAfterRestore();

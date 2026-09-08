@@ -613,7 +613,23 @@ async function submitOrder(ctx: Ctx, p: Row): Promise<Response> {
       `_Catatan: ${p.notes || '-'}_`,
   );
 
-  await publishOrderEvent(ctx, storeId, 'order_new', { invoice, status: initStatus });
+  // v2.2.57+131: broadcast row order LENGKAP (bukan cuma invoice+status)
+  // supaya app bisa insert langsung ke DB lokal via _handleRealtimeInsert.
+  await publishOrderEvent(ctx, storeId, 'order_new', {
+    invoice,
+    status: initStatus,
+    customer_name: customerName ?? 'Pelanggan',
+    customer_phone: phone,
+    items,
+    subtotal: Number(p.subtotal) || 0,
+    discount: Number(p.discount) || 0,
+    handling_fee: Number(p.handling_fee) || 0,
+    total: Number(p.total) || 0,
+    payment_method: p.payment_method ?? 'Tunai',
+    pickup_time: p.pickup_time ?? 'Segera',
+    branch: p.branch ?? 'Pusat',
+    notes: p.notes ?? '',
+  });
 
   return json({
     ok: true,

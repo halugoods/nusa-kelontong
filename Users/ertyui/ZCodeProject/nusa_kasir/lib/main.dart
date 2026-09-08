@@ -149,6 +149,9 @@ Future<void> _applyPendingRestore() async {
 
     await pending.delete();
     await SecureStore.clearPendingRestore();
+    // v2.2.57+131: tandai lastCloudSeen = now supaya autosync tidak menimpa
+    // DB yang baru di-swap dengan backup cloud lama/kosong di launch berikutnya.
+    await SecureStore.setLastCloudSeen(DateTime.now());
   } catch (e) {
     // Keep the marker and pending file so the restore can be retried next launch.
     debugPrint('[Restore] _applyPendingRestore error (will retry): $e');
