@@ -87,12 +87,22 @@ export async function handle_google_link(ctx: FnContext, _params: Record<string,
 
   if (!row) {
     // 2. Sudah ada akun email sama (password) → LINK.
+    // v2.2.57+130-fix: cek apakah akun ini sudah punya google_user_id BEDA.
+    // Jangan overwrite — bisa corrupt akun orang lain yang sudah linked.
     if (email) {
       row = await ctx.env.DB.prepare('SELECT * FROM accounts WHERE email = ?').bind(email).first<AccountRow>();
       if (row) {
-        await ctx.env.DB.prepare('UPDATE accounts SET google_user_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
-          .bind(gid, row.id).run();
-        row.google_user_id = gid;
+        if (row.google_user_id && row.google_user_id !== gid) {
+          return json({ error: 'Email ini sudah linked ke akun Google lain' }, 409);
+        }
+        try {
+          await ctx.env.DB.prepare('UPDATE accounts SET google_user_id = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .bind(gid, row.id).run();
+          row.google_user_id = gid;
+        } catch (e) {
+          // UNIQUE violation — google_user_id sudah dipakai akun lain
+          return json({ error: 'Akun Google ini sudah linked ke email lain' }, 409);
+        }
       }
     }
     if (!row) {

@@ -119,8 +119,10 @@ export class Router {
 
       const authed = isAdmin || jwtPayload != null;
 
-      // LIST
+      // LIST — auth required (v2.2.57+130-fix: tutup enumeration,
+      // siapa saja bisa list semua backup path + size tanpa auth)
       if (objPath === '' && req.method === 'GET') {
+        if (!authed) return errorJson('Unauthorized', 401);
         const prefix = url.searchParams.get('prefix') ?? '';
         const limit = Number(url.searchParams.get('limit') ?? 500);
         const listed = await bucket.list({ prefix, limit });

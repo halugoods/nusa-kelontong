@@ -525,10 +525,11 @@ def build_apk(variant_id: str, lite: bool = False):
     mode = "LITE (offline)" if lite else "FULL (cloud)"
     print(f"  → Building release APK [{mode}]...")
     started = time.time()
-    # Build command — add --dart-define=CLOUD_ENABLED=false for Lite builds
+    # Build command — add --dart-define for Lite builds (offline, no Google/Auth)
     cmd = [FLUTTER, "build", "apk", "--release"]
     if lite:
         cmd.append("--dart-define=CLOUD_ENABLED=false")
+        cmd.append("--dart-define=NUSA_LITE=true")
     r = subprocess.run(cmd, cwd=BASE_DIR,
                        capture_output=True, text=True, timeout=2400)
     if r.returncode != 0:
@@ -554,6 +555,10 @@ def validate_variant(variant: dict):
 
 
 def main():
+    # v2.2.57+130: Lite-only mode (FULL release jalan terpisah)
+    lite_only = "--lite-only" in sys.argv
+    if lite_only:
+        sys.argv = [a for a in sys.argv if a != "--lite-only"]
     requested = set(sys.argv[1:])
     unknown = requested - {v["id"] for v in VARIANTS}
     if unknown:
@@ -572,11 +577,14 @@ def main():
             shutil.copy2(source, backup)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         # Build each variant twice: FULL (cloud) + LITE (offline)
-        total_builds = len(variants) * 2
+        # Skip kelontong Lite (already built manually)
+        total_builds = len(variants) * (1 if lite_only else 2)
+        skip_variants_lite = set()  # Add variant id here if Lite already built
         build_idx = 0
         for variant in variants:
             vid = variant["id"]
-            for lite in [False, True]:
+            lite_modes = [True] if lite_only else [False, True]
+            for lite in lite_modes:
                 build_idx += 1
                 mode = "LITE" if lite else "FULL"
                 print(f"\n{'='*50}\n  [{build_idx}/{total_builds}] {variant['name']} ({vid}) [{mode}]\n{'='*50}")

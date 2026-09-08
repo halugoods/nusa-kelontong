@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS licenses (
   key             TEXT UNIQUE NOT NULL,
   serial          TEXT NOT NULL,
   product         TEXT DEFAULT 'nusa-kasir',
+  mode            TEXT DEFAULT 'full',        -- full | lite (v2.2.57+130)
   status          TEXT DEFAULT 'Generated',  -- Generated|Trial|Active|Cancelled|Expired|Suspended
   owner_email     TEXT,
   google_user_id  TEXT,

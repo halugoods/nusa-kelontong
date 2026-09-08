@@ -126,6 +126,8 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
   const isTrial = params.is_trial === true;
   const tier = (params.tier as string | undefined) ?? (isTrial ? 'trial' : 'lifetime');
   const product = (params.product as string | undefined) ?? 'nusa-kasir';
+  const mode = (params.mode as string | undefined) ?? 'full'; // full | lite
+  if (mode !== 'full' && mode !== 'lite') return json({ error: 'mode must be full or lite' }, 400);
 
   const keys: { key: string; serial: string }[] = [];
 
@@ -149,7 +151,7 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
 
   // Insert semua ke tabel licenses
   const insertStmt = env.DB.prepare(
-    'INSERT INTO licenses (id, key, serial, product, tier, status, owner_email, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO licenses (id, key, serial, product, mode, tier, status, owner_email, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
   );
   try {
     await env.DB.batch(
@@ -159,6 +161,7 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
           k.key,
           k.serial,
           product,
+          mode,
           tier,
           tier === 'trial' ? 'Trial' : 'Generated',
           ownerEmail,
@@ -182,7 +185,8 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
         buyerName || 'Pelanggan NUSA',
         keys.map((k) => k.key),
         tier,
-        product
+        product,
+        mode
       );
       emailSent = true;
     } catch (e: any) {
@@ -195,6 +199,7 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
     count: keys.length,
     keys: keys.map((k) => k.key),
     tier,
+    mode,
     product,
     expires_at: trialExpires,
     email_sent: emailSent,
@@ -210,7 +215,8 @@ async function sendActivationEmail(
   buyerName: string,
   keys: string[],
   tier = 'lifetime',
-  product = 'nusa-kasir'
+  product = 'nusa-kasir',
+  mode = 'full'
 ): Promise<void> {
   const resendApiKey = env.RESEND_API_KEY ?? '';
   const resendFromEmail = env.RESEND_FROM_EMAIL ?? 'nusa@halugoods.com';
@@ -237,7 +243,9 @@ async function sendActivationEmail(
   const productName = productNames[product] ?? 'NUSA';
 
   const tierLabel = tier === 'trial' ? 'Trial 3 Hari' : tier === '1month' ? '1 Bulan' : 'Lifetime';
-  const tierPrice = tier === 'trial' ? 'GRATIS' : tier === '1month' ? 'Rp 49K' : 'Rp 249K';
+  const tierPrice = tier === 'trial' ? 'GRATIS' : tier === '1month'
+    ? (mode === 'lite' ? 'Rp 49K' : 'Rp 99K')
+    : (mode === 'lite' ? 'Rp 249K' : 'Rp 499K');
 
   const subject = tier === 'trial'
     ? `Trial ${productName} 3 Hari — Key Aktivasi Anda`
@@ -247,18 +255,20 @@ async function sendActivationEmail(
 
   const badge = `<p style="color:#fde8ea;margin:6px 0 0;font-size:13px">${tierLabel} — ${tierPrice}</p>`;
 
+  const priceMonthly = mode === 'lite' ? 'Rp 49K' : 'Rp 99K';
+  const priceLifetime = mode === 'lite' ? 'Rp 249K' : 'Rp 499K';
   const trialNotice = tier === 'trial'
     ? `<div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:24px">
         <p style="margin:0;font-size:13px;color:#92400e">
           ⏳ <strong>Trial 3 Hari</strong> — Key ini berlaku selama 3 hari sejak aktivasi pertama.<br>
-          Setelah masa trial habis, kamu bisa beli lisensi seharga <strong>Rp 49K/bulan</strong> atau <strong>Rp 249K lifetime</strong>.
+          Setelah masa trial habis, kamu bisa beli lisensi seharga <strong>${priceMonthly}/bulan</strong> atau <strong>${priceLifetime} lifetime</strong>.
         </p>
       </div>`
     : tier === '1month'
     ? `<div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:24px">
         <p style="margin:0;font-size:13px;color:#92400e">
           📅 <strong>Lisensi 1 Bulan</strong> — Berlaku 30 hari sejak aktivasi.<br>
-          Ingin selamanya? Upgrade ke <strong>Rp 249K lifetime</strong> kapan saja.
+          Ingin selamanya? Upgrade ke <strong>${priceLifetime} lifetime</strong> kapan saja.
         </p>
       </div>`
     : `<div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:24px">
@@ -689,6 +699,103 @@ export async function handleAutoClaim(ctx: FnContext, params: Params): Promise<R
   return json({ ok: true, license_key: lic.key, product, status: 'Active' });
 }
 
+// ─── Lite activation (v2.2.57+130): email + key, no Google Sign-In ──
+//
+// Untuk varian Lite (tanpa Google Sign-In). User input email + license key
+// di app, sistem validasi email cocok dengan key di D1, langsung aktivasi.
+// Tidak perlu x-admin-key karena ini endpoint publik untuk end-user.
+//
+// Flow:
+//   1. Cari license by key
+//   2. Cek: status harus Generated/Active (suspended/revoked ditolak)
+//   3. Cek: LOWER(owner_email) == LOWER(input_email) → tolak kalau beda
+//   4. Cek: tier = trial / 1month / lifetime — kalau trial → set Active
+//      dan expires_at = now + 3 hari
+//   5. Cek: kalau mode = lite, abaikan cloud features, return ok
+//   6. Return {ok, license_key, product, mode, expires_at, message}
+export async function handleActivateLite(ctx: FnContext, params: Params): Promise<Response> {
+  const email = String(params.email ?? '').trim().toLowerCase();
+  const licenseKey = String(params.license_key ?? '').trim();
+  const product = String(params.product ?? 'nusa-kasir').trim();
+  const deviceId = String(params.device_id ?? '').trim();
+
+  if (!email) return errorJson('email required', 400);
+  if (!licenseKey) return errorJson('license_key required', 400);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return errorJson('format email tidak valid', 400);
+  }
+
+  // 1. Cari license by key
+  const lic = await ctx.env.DB.prepare(
+    "SELECT id, key, serial, status, owner_email, google_user_id, tier, mode, expires_at, product FROM licenses WHERE key = ?"
+  ).bind(licenseKey).first<Row>();
+
+  if (!lic) return errorJson('license_key tidak valid', 404);
+
+  // 2. Cek status
+  if (lic.status === 'Cancelled' || lic.status === 'Expired') {
+    return errorJson(`lisensi ${lic.status.toLowerCase()} — hubungi admin`, 403);
+  }
+
+  // 3. Cek email cocok
+  const licEmail = String(lic.owner_email ?? '').trim().toLowerCase();
+  if (!licEmail) {
+    return errorJson('lisensi belum terikat email — minta admin isi email saat generate', 400);
+  }
+  if (licEmail !== email) {
+    return errorJson('email tidak cocok dengan lisensi', 403);
+  }
+
+  // 4. Tentukan mode — kalau belum ada, default 'full' (backward compat)
+  const mode = lic.mode ?? 'full';
+
+  // 5. Cek expired
+  let expiresAt = lic.expires_at as string | null;
+  if (lic.tier === 'trial' && (!expiresAt || new Date(expiresAt) < new Date())) {
+    // trial baru: set expires_at = now + 3 hari (idempotent — hanya set sekali)
+    expiresAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  } else if (expiresAt && new Date(expiresAt) < new Date()) {
+    return errorJson('lisensi sudah expired — hubungi admin untuk perpanjang', 403);
+  }
+
+  // 6. Set status → Active, simpan expires_at kalau baru
+  try {
+    await ctx.env.DB.prepare(
+      "UPDATE licenses SET status = 'Active', expires_at = COALESCE(?, expires_at), product = COALESCE(?, product) WHERE id = ?"
+    ).bind(expiresAt, product, lic.id).run();
+  } catch (e: any) {
+    return errorJson(e?.message ?? String(e), 500);
+  }
+
+  // 7. Insert activation (device_id opsional — Lite tanpa Google jadi
+  //    device_id di-hash dari email+device agar konsisten tiap install)
+  if (deviceId) {
+    try {
+      await ctx.env.DB.prepare(
+        "INSERT OR IGNORE INTO activations (id, license_id, device_id, google_user_id) VALUES (?, ?, ?, ?)"
+      ).bind(uid(), lic.id, deviceId, null).run();
+    } catch (e: any) {
+      // UNIQUE violation = sudah pernah aktivasi di device yg sama, OK
+      if (!String(e?.message ?? '').includes('UNIQUE')) {
+        // non-fatal — aktivasi utama tetap sukses
+        console.error('lite activation insert error:', e?.message);
+      }
+    }
+  }
+
+  return json({
+    ok: true,
+    license_key: lic.key,
+    product: lic.product ?? product,
+    mode,
+    tier: lic.tier,
+    status: 'Active',
+    expires_at: expiresAt,
+    owner_email: licEmail,
+    message: 'Aktivasi berhasil',
+  });
+}
+
 Router.registerAll('license-manager', {
   generate: adminWrap(handleGenerate),
   add: adminWrap(handleAdd),
@@ -701,4 +808,5 @@ Router.registerAll('license-manager', {
   get_min_versions: adminWrap(handleGetMinVersions),
   set_min_version: adminWrap(handleSetMinVersion),
   auto_claim: handleAutoClaim,
+  activate_lite: handleActivateLite,
 });

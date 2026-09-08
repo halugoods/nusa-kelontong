@@ -101,11 +101,29 @@ class SecureStore {
   /// Pilih satu identitas backup yang konsisten:
   /// prefer account UUID (email/password — jalur login terbaru), lalu
   /// Google 21-digit. Hanya bila keduanya tidak ada → null.
+  ///
+  /// Lite mode (v2.2.57+130): kalau tidak ada akun Google/email-password
+  /// (Lite tidak butuh login), fallback ke `nusa_lite_email` (email yg
+  /// diinput saat aktivasi Lite). Email lowecased → deterministic, cocok
+  /// sebagai identitas enkripsi backup (SHA-256(uid) → AES key).
   static Future<String?> resolveCanonicalUid() async {
     final account = await SecureStore.read(key: 'nusa_account_uid');
     if (account != null && account.isNotEmpty) return account;
-    return SecureStore.read(key: 'nusa_google_user_id');
+    final google = await SecureStore.read(key: 'nusa_google_user_id');
+    if (google != null && google.isNotEmpty) return google;
+    // Lite mode: pakai email sebagai UID
+    if (NusaConfig.isLite) {
+      final lite = await SecureStore.read(key: 'nusa_lite_email');
+      if (lite != null && lite.isNotEmpty) return lite;
+    }
+    return null;
   }
+
+  /// Lite mode: simpan email aktivasi (untuk backup identity Lite).
+  static Future<void> saveLiteEmail(String email) =>
+      SecureStore.write(key: 'nusa_lite_email', value: email.toLowerCase());
+  static Future<String?> getLiteEmail() async =>
+      SecureStore.read(key: 'nusa_lite_email');
 
   // -- Activation (namespaced per product to prevent cross-variant license leaks) --
   static String get _activationKey => 'nusa_activation_${NusaConfig.productId}';

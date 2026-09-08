@@ -18,6 +18,13 @@ type Params = Record<string, unknown>;
 type Row = Record<string, any>;
 type H = (ctx: FnContext, params: Params) => Promise<Response>;
 
+// v2.2.57+130-fix: create/update/delete butuh admin auth (x-admin-key).
+// list tetap public (JWT anon cukup — tutorial konten publik).
+function requireAdmin(ctx: FnContext): Response | null {
+  if (ctx.isAdmin) return null;
+  return json({ error: 'Unauthorized — x-admin-key required' }, 401);
+}
+
 /** Baris D1 → bentuk JSON yang dulu dikirim Supabase (variants text[] → array). */
 function rowToTutorial(r: Row): Row {
   return { ...r, variants: parseJson<string[]>(r.variants, []) };
@@ -37,6 +44,8 @@ async function listTutorials(ctx: FnContext, params: Params): Promise<Response> 
 }
 
 async function createTutorial(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAdmin(ctx);
+  if (authErr) return authErr;
   const title = params.title as string | undefined;
   const ytUrl = params.yt_url as string | undefined;
   if (!title || !ytUrl) return json({ error: 'title & yt_url required' }, 400);
@@ -63,6 +72,8 @@ async function createTutorial(ctx: FnContext, params: Params): Promise<Response>
 }
 
 async function updateTutorial(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAdmin(ctx);
+  if (authErr) return authErr;
   const id = params.id as string | undefined;
   if (!id) return json({ error: 'id required' }, 400);
   const patch: string[] = ['updated_at = ?'];
@@ -86,6 +97,8 @@ async function updateTutorial(ctx: FnContext, params: Params): Promise<Response>
 }
 
 async function deleteTutorial(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAdmin(ctx);
+  if (authErr) return authErr;
   const id = params.id as string | undefined;
   if (!id) return json({ error: 'id required' }, 400);
   await ctx.env.DB.prepare('DELETE FROM tutorials WHERE id = ?').bind(id).run();

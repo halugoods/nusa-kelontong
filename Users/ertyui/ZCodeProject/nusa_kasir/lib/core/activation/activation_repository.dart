@@ -123,6 +123,54 @@ class ActivationRepository {
     return ActivationResult(true);
   }
 
+  /// Lite activation (v2.2.57+130) — email + key only, tanpa Google Sign-In.
+  /// Validasi email cocok dengan key di server. Tidak butuh Google auth.
+  ///
+  /// Alur:
+  /// 1. Verify Ed25519 signature lokal (tetap pakai — admin issued key valid)
+  /// 2. POST /api/license-manager/activate_lite {email, license_key, product, device_id}
+  /// 3. Server cek: key valid? email cocok? status ok? → return Active
+  /// 4. Save key + email (untuk backup encryption identity Lite)
+  Future<ActivationResult> activateLite(String rawKey, String email, {String? deviceId}) async {
+    final key = rawKey.trim().toUpperCase();
+    final emailLower = email.trim().toLowerCase();
+
+    // 1. Verify signature lokal
+    final valid = await ActivationKey.verify(key, nusaActivationPublicKey);
+    if (!valid) return ActivationResult(false, 'Format key tidak valid');
+
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(emailLower)) {
+      return ActivationResult(false, 'Format email tidak valid');
+    }
+
+    // 2. Panggil worker Lite activation
+    try {
+      final res = await CloudGateway.shared.invokeRaw(
+        'license-manager',
+        'activate_lite',
+        body: {
+          'license_key': key,
+          'email': emailLower,
+          'product': NusaConfig.productId,
+          if (deviceId != null) 'device_id': deviceId,
+        },
+      );
+      if (res.status >= 400) {
+        final data = res.data as Map<String, dynamic>?;
+        final err = data?['error'] as String? ?? 'Aktivasi gagal';
+        return ActivationResult(false, err);
+      }
+    } catch (e) {
+      return ActivationResult(false, 'Gagal terhubung ke server: $e');
+    }
+
+    // 3. Save locally
+    await SecureStore.saveActivation(key);
+    await SecureStore.saveLiteEmail(emailLower);
+
+    return ActivationResult(true);
+  }
+
   /// Build the backup path using the stored Google user ID + product ID.
   /// Namespaced per product to prevent cross-variant data leakage.
   static Future<String?> _backupPath() async {

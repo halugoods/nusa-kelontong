@@ -81,7 +81,13 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
   // yang PIN-nya 4 digit tidak stuck selamanya.
   int _pinLength = 6;
 
-  // Screen state: 'auth' (login) | 'signup' | 'google_loading' | 'decision' | 'pin' | 'key' | 'trial_expired'
+  // Lite activation (v2.2.57+130): email + key, tanpa Google Sign-In
+  final _liteEmailCtrl = TextEditingController();
+  final _liteKeyCtrl = TextEditingController();
+  bool _liteLoading = false;
+  String? _liteError;
+
+  // Screen state: 'auth' (login) | 'signup' | 'google_loading' | 'decision' | 'pin' | 'key' | 'trial_expired' | 'lite'
   String _screen = 'auth';
 
   // v2.2.44 (L2/L3): expires_at lisensi yang habis — untuk countdown grace
@@ -109,9 +115,27 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
   /// Auto sign-in: akun email/password dulu (kalau "Ingat saya" dicentang),
   /// lalu fallback ke Google seperti sebelumnya. Keduanya berujung pada
   /// `_checkLicenseStatus`.
+  ///
+  /// v2.2.57+130 Lite: skip auto-sign-in kalau Lite — user akan langsung ke
+  /// Lite screen (email + key) atau langsung ke quick setup kalau sudah aktivasi.
   Future<void> _initAutoSignIn() async {
     final activated = (await SecureStore.getActivation()) != null;
-    if (!activated) return;
+    if (!activated) {
+      // Lite: belum aktivasi → langsung ke Lite screen (email + key)
+      if (NusaConfig.isLite && mounted) {
+        setState(() => _screen = 'lite');
+      }
+      return;
+    }
+    // Lite yang sudah aktivasi: cek cloud via Lite email → langsung ke setup/PIN
+    if (NusaConfig.isLite) {
+      final liteEmail = await SecureStore.getLiteEmail();
+      if (liteEmail != null && liteEmail.isNotEmpty && mounted) {
+        _googleId = liteEmail;
+        await _checkLicenseStatus(liteEmail);
+      }
+      return;
+    }
     final accountUid = await AccountAuthService.getStoredUid();
     if (accountUid != null && await AccountAuthService.shouldRemember()) {
       if (!mounted) return;
@@ -288,6 +312,40 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
   }
 
   bool _isEmail(String s) => RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(s);
+
+  /// Lite activation (v2.2.57+130): email + license key only.
+  ///
+  /// Alur:
+  /// 1. Verifikasi key signature lokal (cek format)
+  /// 2. Panggil ActivationRepository.activateLite() → worker endpoint
+  ///    `license-manager/activate_lite` yang validasi email cocok dengan key
+  /// 3. Kalau sukses → _checkLicenseStatus(email) → quick setup atau PIN
+  Future<void> _submitLiteActivation() async {
+    final email = _liteEmailCtrl.text.trim();
+    final key = _liteKeyCtrl.text.trim();
+    if (email.isEmpty || key.isEmpty) {
+      setState(() => _liteError = 'Email dan key wajib diisi');
+      return;
+    }
+    if (!_isEmail(email)) {
+      setState(() => _liteError = 'Format email tidak valid');
+      return;
+    }
+    setState(() {
+      _liteLoading = true;
+      _liteError = null;
+    });
+    final repo = ref.read(activationRepoProvider);
+    final res = await repo.activateLite(key, email);
+    if (!mounted) return;
+    setState(() => _liteLoading = false);
+    if (!res.ok) {
+      setState(() => _liteError = res.error ?? 'Aktivasi gagal');
+      return;
+    }
+    _googleId = email.toLowerCase();
+    await _checkLicenseStatus(email.toLowerCase());
+  }
 
   Future<void> _openLandingPage() async {
     final uri = Uri.parse(NusaConfig.landingPageUrl);
@@ -965,6 +1023,8 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
         return _buildPinScreen(isDark);
       case 'key':
         return _buildKeyScreen(isDark);
+      case 'lite':
+        return _buildLiteScreen(isDark);
       default:
         return _buildAuthScreen(isDark);
     }
@@ -1299,6 +1359,235 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
 
                   const SizedBox(height: 32),
                 ],
+                Text(
+                    'v${NusaConfig.appVersion}+${NusaConfig.appBuildNumber}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark
+                          ? NusaConfig.darkTextTertiary
+                          : NusaConfig.textTertiary,
+                    )),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Lite Screen (email + license key — tanpa Google/Auth) ────────────
+  //
+  // v2.2.57+130 Lite: login screen disederhanakan jadi form email + key.
+  // - Tidak ada Google Sign-In
+  // - Tidak ada password
+  // - Tidak ada signup
+  // User tinggal input email yg didaftarkan admin di dashboard + key yang
+  // dikirim (via e-commerce / WA). Server (worker license-manager) yang
+  // validasi email cocok dengan key.
+
+  Widget _buildLiteScreen(bool isDark) {
+    return Scaffold(
+      backgroundColor: isDark ? NusaConfig.darkBackground : Color(0xFFF5F5F5),
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+            child: Column(
+              children: [
+                Image.asset(
+                  splashLogoPath(),
+                  width: 96,
+                  height: 96,
+                  errorBuilder: (_, __, ___) => Text(
+                    'NUSA',
+                    style: TextStyle(
+                      fontSize: 40,
+                      fontWeight: FontWeight.w800,
+                      color: NusaConfig.activePrimary,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Text('NUSA Lite',
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineMedium
+                        ?.copyWith(
+                          color: NusaConfig.activePrimary,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -1,
+                        )),
+                const SizedBox(height: 6),
+                Text(
+                  'Aktivasi NUSA Lite — masukkan email & key yang diberikan admin',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: isDark
+                        ? NusaConfig.darkTextSecondary
+                        : const Color(0xFF3F3F46),
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // ── Card: form email + key ──
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: isDark ? NusaConfig.darkSurface : Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color:
+                            Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
+                        blurRadius: 20,
+                        offset: Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Aktivasi',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: isDark
+                                ? NusaConfig.darkTextPrimary
+                                : const Color(0xFF151717),
+                          )),
+                      const SizedBox(height: 4),
+                      Text('Email harus cocok dengan yang didaftarkan admin',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: isDark
+                                ? NusaConfig.darkTextSecondary
+                                : const Color(0xFF3F3F46),
+                          )),
+                      const SizedBox(height: 20),
+
+                      // Email
+                      TextField(
+                        controller: _liteEmailCtrl,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.next,
+                        style: TextStyle(fontSize: 14),
+                        decoration: _authInputDecoration(
+                          label: 'Email',
+                          icon: Icons.mail_outline,
+                          isDark: isDark,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
+                      // License key
+                      TextField(
+                        controller: _liteKeyCtrl,
+                        keyboardType: TextInputType.visiblePassword,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _submitLiteActivation(),
+                        style: TextStyle(
+                          fontSize: 14,
+                          letterSpacing: 1.0,
+                          fontFamily: 'monospace',
+                        ),
+                        decoration: _authInputDecoration(
+                          label: 'License Key',
+                          icon: Icons.key_outlined,
+                          isDark: isDark,
+                        ),
+                      ),
+
+                      if (_liteError != null) ...[
+                        const SizedBox(height: 12),
+                        _authErrorBox(_liteError!, isDark),
+                      ],
+
+                      const SizedBox(height: 20),
+
+                      // Tombol Aktivasi
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed:
+                              _liteLoading ? null : _submitLiteActivation,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: NusaConfig.activePrimary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            disabledBackgroundColor:
+                                NusaConfig.activePrimary.withValues(alpha: 0.5),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                          child: _liteLoading
+                              ? SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text('Aktivasi',
+                                  style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 16),
+
+                // Footer kecil: ke mana user beli & tanya admin
+                Container(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: (isDark
+                            ? NusaConfig.darkSurface2
+                            : const Color(0xFFFFF7ED))
+                        .withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: isDark
+                          ? NusaConfig.darkBorder.withValues(alpha: 0.5)
+                          : const Color(0xFFFED7AA),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 16,
+                          color: isDark
+                              ? NusaConfig.darkTextTertiary
+                              : const Color(0xFF9A3412)),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Belum punya key? Hubungi admin atau beli paket '
+                          'NUSA Lite di e-commerce. Email yg diinput di sini '
+                          'harus sama dengan yg didaftarkan admin.',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark
+                                ? NusaConfig.darkTextSecondary
+                                : const Color(0xFF7C2D12),
+                            height: 1.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
                 Text(
                     'v${NusaConfig.appVersion}+${NusaConfig.appBuildNumber}',
                     style: TextStyle(

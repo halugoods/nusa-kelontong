@@ -31,6 +31,15 @@ type H = (ctx: FnContext, params: Params) => Promise<Response>;
 const DEFAULT_AI_BASE = 'https://openrouter.ai/api/v1';
 const DEFAULT_AI_MODEL = 'google/gemini-2.0-flash-lite-001';
 
+// ─── Auth helper — reject unauthenticated requests ───────────────────
+// v2.2.57+130-fix: semua endpoint AI butuh auth (JWT dari app atau admin key
+// dari dashboard). Tanpa ini, siapa saja bisa panggil chat = biaya OpenRouter
+// meledak (financial risk).
+function requireAuth(ctx: FnContext): Response | null {
+  if (ctx.isAdmin || ctx.jwt) return null; // authenticated
+  return json({ error: 'Unauthorized — kirim x-admin-key atau Bearer JWT' }, 401);
+}
+
 // ─── Provider config (prioritas owner → global '*' → default) ──────
 
 async function loadProviderConfig(env: Env, owner: string | null): Promise<{
@@ -198,6 +207,8 @@ function streamResponse(providerRes: Response): Response {
 // ─── Handler utama: chat ────────────────────────────────────────────
 
 async function handleChat(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const body = params;
   const messages = body.messages as { role: string; content: string | null }[] | undefined;
   const storeName = body.store_name as string | undefined;
@@ -269,6 +280,8 @@ async function handleChat(ctx: FnContext, params: Params): Promise<Response> {
 // ─── GET settings — config AI untuk owner (dashboard + app) ────────
 
 async function handleGetSettings(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const owner = (params.owner as string) ?? '';
   let cfg: Row | null = null;
   if (owner) {
@@ -291,6 +304,8 @@ async function handleGetSettings(ctx: FnContext, params: Params): Promise<Respon
 // ─── POST save_settings — upsert ai_settings (dashboard + app) ─────
 
 async function handleSaveSettings(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const owner = String(params.owner ?? '').trim();
   const baseUrl = String(params.base_url ?? '').trim();
   const apiKey = String(params.api_key ?? '').trim();
@@ -319,6 +334,8 @@ async function handleSaveSettings(ctx: FnContext, params: Params): Promise<Respo
 // ─── POST test — uji koneksi provider (config draft, belum disimpan) ──
 
 async function handleTest(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const baseUrl = String(params.base_url ?? '').trim() || DEFAULT_AI_BASE;
   const apiKey = String(params.api_key ?? '').trim() || ctx.env.OPENROUTER_API_KEY || '';
   const model = String(params.model ?? '').trim() || DEFAULT_AI_MODEL;
@@ -374,6 +391,8 @@ async function handleTest(ctx: FnContext, params: Params): Promise<Response> {
 // ─── POST history — daftar sesi chat cloud milik owner ──────────────
 
 async function handleGetHistory(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const owner = String(params.owner ?? '').trim();
   if (!owner) return json({ error: 'owner is required' }, 400);
   const limit = Math.min(Math.max(Number(params.limit) || 30, 1), 100);
@@ -407,6 +426,8 @@ async function handleGetHistory(ctx: FnContext, params: Params): Promise<Respons
 // ─── POST history_messages — isi pesan 1 sesi cloud ─────────────────
 
 async function handleGetHistoryMessages(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const owner = String(params.owner ?? '').trim();
   const sessionId = String(params.session_id ?? '').trim();
   if (!owner || !sessionId) return json({ error: 'owner and session_id are required' }, 400);
@@ -426,6 +447,8 @@ async function handleGetHistoryMessages(ctx: FnContext, params: Params): Promise
 // ─── POST history_delete — hapus 1 sesi cloud ───────────────────────
 
 async function handleDeleteHistory(ctx: FnContext, params: Params): Promise<Response> {
+  const authErr = requireAuth(ctx);
+  if (authErr) return authErr;
   const owner = String(params.owner ?? '').trim();
   const sessionId = String(params.session_id ?? '').trim();
   if (!owner || !sessionId) return json({ error: 'owner and session_id are required' }, 400);

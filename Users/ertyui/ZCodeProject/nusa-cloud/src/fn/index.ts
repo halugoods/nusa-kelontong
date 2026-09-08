@@ -25,3 +25,4 @@ import './instanpay';
 // ── Export & backup recovery ─────────────────────────────────────────
 import './export_backup';
 import './backup_cron';
+import './backup_recovery';
