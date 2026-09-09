@@ -14,6 +14,7 @@ import 'package:nusa_kasir/core/cloud/cloud_gateway.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/google_auth_service.dart';
 import 'package:nusa_kasir/core/services/image_storage_service.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/utils/image_utils.dart';
 import 'package:nusa_kasir/core/utils/format_rupiah.dart';
 import 'package:nusa_kasir/core/utils/product_discount.dart';
@@ -738,6 +739,28 @@ class _ProductFormSheetState extends ConsumerState<ProductFormSheet> {
         );
         // C3: balik ke Catat Pembelian dengan id produk baru (untuk masuk keranjang).
         Navigator.pop(context, createdId);
+      }
+      // v2.2.57+131: announce product change via delta sync so other
+      // devices on the same account pick up the change within seconds.
+      final pid = _isEdit ? widget.productId : createdId;
+      if (pid != null) {
+        try {
+          DeltaSyncService.I.pushDelta(
+            table: 'products',
+            recordId: pid.toString(),
+            operation: _isEdit ? 'UPDATE' : 'INSERT',
+            data: {
+              'id': pid,
+              'name': name,
+              'category': _category,
+              'buy_price': buy,
+              'sell_price': sell,
+              'stock': stock,
+              'is_online': _isOnline,
+              'is_service': _isService,
+            },
+          );
+        } catch (_) {}
       }
     } catch (e) {
       debugPrint('[ProductForm] save error: $e');

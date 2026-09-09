@@ -26,3 +26,6 @@ import './instanpay';
 import './export_backup';
 import './backup_cron';
 import './backup_recovery';
+
+// ── Delta sync ───────────────────────────────────────────────────────
+import './sync_delta';

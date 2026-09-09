@@ -1192,8 +1192,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final penjualan = sum['omzet'] as int;
       final trxCount = sum['count'] as int;
 
-      // Profit estimate
-      final laba = (penjualan * 0.9).round();
+      // Profit — use real P&L calculation (same as Laporan menu)
+      final pl = await reportRepo.profitLoss(
+        from: today,
+        to: now,
+        branchId: branchId,
+      );
+      final laba = (pl['labaBersih'] as int?) ?? 0;
 
       // Cash drawer — from today's attendance record
       final todayAtt = await attRepo.getToday(employeeId);

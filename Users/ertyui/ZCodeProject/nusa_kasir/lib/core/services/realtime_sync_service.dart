@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:nusa_kasir/core/cloud/cloud_gateway.dart';
@@ -22,7 +23,14 @@ class RealtimeBackupNotifier {
   StreamSubscription<dynamic>? _sub;
   bool _shouldRun = false;
   Timer? _reconnectTimer;
-  static const _reconnectDelay = Duration(seconds: 5);
+
+  // v2.2.57+130 (A3): exponential backoff untuk reconnect — hindari hammer
+  // server saat worker restart / network flap. Delay tumbuh 1s → 2s → 4s → …
+  // sampai max 30s, reset ke awal saat koneksi berhasil.
+  static const _initialDelay = Duration(seconds: 1);
+  static const _maxDelay = Duration(seconds: 30);
+  static const _multiplier = 2;
+  int _attempt = 0;
 
   /// Channel name shared by all devices signed into the same account.
   /// Mirrors CallService pattern.
@@ -55,6 +63,9 @@ class RealtimeBackupNotifier {
       }
       // Tunggu handshake selesai sebelum listen (ws.ready).
       await ws.ready.timeout(const Duration(seconds: 8));
+      // Koneksi berhasil — reset backoff counter supaya retry berikutnya
+      // mulai dari delay awal lagi.
+      _attempt = 0;
       _channel = ws;
       _sub = ws.stream.listen((message) {
         try {
@@ -93,7 +104,17 @@ class RealtimeBackupNotifier {
   void _scheduleReconnect() {
     if (!_shouldRun) return;
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(_reconnectDelay, () {
+
+    // Exponential backoff: delay = min(initial * multiplier^attempt, max).
+    final delayMs = math.min(
+      _initialDelay.inMilliseconds * math.pow(_multiplier, _attempt).toInt(),
+      _maxDelay.inMilliseconds,
+    );
+    final delay = Duration(milliseconds: delayMs);
+    _attempt++;
+
+    debugPrint('[RealtimeSync] reconnect in ${delay.inSeconds}s (attempt $_attempt)');
+    _reconnectTimer = Timer(delay, () {
       if (!_shouldRun) return;
       _sub = null;
       _channel = null;

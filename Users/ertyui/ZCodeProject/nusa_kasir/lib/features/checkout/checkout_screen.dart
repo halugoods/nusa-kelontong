@@ -22,6 +22,8 @@ import 'package:nusa_kasir/data/repositories/laundry_order_repository.dart';
 import 'package:nusa_kasir/data/repositories/appointment_repository.dart';
 import 'package:nusa_kasir/data/repositories/attendance_repository.dart';
 import 'package:nusa_kasir/core/services/sound_service.dart';
+import 'package:nusa_kasir/core/services/realtime_sync_service.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/repositories/print_order_repository.dart';
 import 'package:nusa_kasir/data/repositories/print_service_type_repository.dart';
 import 'package:nusa_kasir/data/repositories/product_repository.dart';
@@ -1263,7 +1265,8 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         // employeeId = logged-in employee; sessionId = active cashier shift
         // (so each cashier's dashboard shows only their own shift's sales).
         final activeShift = await CashierSessionRepository(db).getActive();
-        final savedTxId = await transactionRepo.saveTransaction(          items: cart,
+        final savedTxId = await transactionRepo.saveTransaction(
+          items: cart,
           total: _total,
           discount: _totalDiscount,
           paymentMethod: _paymentMethod,
@@ -1281,6 +1284,29 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
           installmentPerMonth: perMonth > 0 ? perMonth : null,
         );
         bookingTxId = savedTxId;
+
+        // v2.2.57+131: announce transaction immediately so owner's device
+        // knows to pull within ~1s instead of waiting for the 5-min
+        // debounce upload cycle. Upload itself stays debounced (egress),
+        // but the lightweight WS broadcast is near-zero cost.
+        try {
+          RealtimeBackupNotifier.I.broadcastUpdated();
+        } catch (_) {}
+
+        // v2.2.57+131: announce transaction via delta sync so other devices
+        // can apply the row-level change without a full backup pull.
+        try {
+          DeltaSyncService.I.pushDelta(
+            table: 'transactions',
+            recordId: savedTxId.toString(),
+            operation: 'INSERT',
+            data: {
+              'id': savedTxId,
+              'total': _total,
+              'date': DateTime.now().millisecondsSinceEpoch,
+            },
+          );
+        } catch (_) {}
 
         // ── HUTANG / DP: catat sisa sebagai hutang pelanggan (menu Piutang) ──
         // Total transaksi tetap utuh (laporan omzet benar); uang muka tercatat

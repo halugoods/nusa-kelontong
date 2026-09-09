@@ -855,6 +855,23 @@ Future<void> _repairNullDefaults(AppDatabase db) async {
   await db.customStatement(
     'UPDATE debt_payments SET amount = 0 WHERE amount IS NULL',
   );
+  // ── Performance indexes ─────────────────────────────────────────────
+  // Index untuk mempercepat query yang sering dipakai (filter produk online,
+  // transaksi by tanggal, pelanggan by nama/phone). IF NOT EXISTS supaya
+  // idempoten — aman dijalankan berulang di beforeOpen.
+  await db.customStatement(
+    'CREATE INDEX IF NOT EXISTS idx_products_online_cat '
+    'ON products(is_online, category, name)',
+  );
+  await db.customStatement(
+    'CREATE INDEX IF NOT EXISTS idx_transactions_date_branch '
+    'ON transactions(date, branch_id, employee_id)',
+  );
+  await db.customStatement(
+    'CREATE INDEX IF NOT EXISTS idx_customers_name_phone '
+    'ON customers(name, phone)',
+  );
+
   // Tabel yang belum ada di backup lama (mis. open_tabs, roles) — buat kalau
   // hilang. Guard ini hanya berjalan kalau tabel belum ada (idempoten).
   await _createTableIfMissingSafe(db, 'open_tabs');

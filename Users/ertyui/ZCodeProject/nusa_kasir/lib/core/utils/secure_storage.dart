@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:nusa_kasir/core/constants/app_constants.dart';
@@ -631,5 +633,30 @@ class SecureStore {
   static Future<void> bumpConflictCount() async {
     final c = await getConflictCount();
     await setConflictCount(c + 1);
+  }
+
+  // ── Delta sync (v2.2.57+131) ──────────────────────────────────────
+
+  /// Timestamp of the last successful delta pull — sent to the cloud so
+  /// the server can return only deltas newer than this.
+  static Future<DateTime?> getLastDeltaPull() async {
+    final s = await read(key: 'last_delta_pull');
+    if (s == null) return null;
+    return DateTime.tryParse(s);
+  }
+
+  static Future<void> setLastDeltaPull(DateTime t) async {
+    await write(key: 'last_delta_pull', value: t.toIso8601String());
+  }
+
+  /// Stable per-device identifier for delta sync. Generated once and reused.
+  static Future<String?> getDeviceId() async {
+    var id = await read(key: 'device_id');
+    if (id == null) {
+      id =
+          'dev-${DateTime.now().millisecondsSinceEpoch}-${Random().nextInt(99999)}';
+      await write(key: 'device_id', value: id);
+    }
+    return id;
   }
 }

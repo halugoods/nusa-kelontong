@@ -6,6 +6,8 @@ import 'package:nusa_kasir/core/providers.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/core/services/realtime_sync_service.dart';
+import 'package:nusa_kasir/core/services/realtime_order_service.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/shared/widgets/call_receiver_overlay.dart';
 import 'package:nusa_kasir/features/auth/rbac.dart';
 import 'package:nusa_kasir/features/auth/employee_session_provider.dart';
@@ -350,6 +352,20 @@ class _NusaAppState extends ConsumerState<NusaApp> with WidgetsBindingObserver {
           ref.read(autoSyncProvider).pullNow();
         } catch (_) {}
       });
+    } catch (_) {}
+
+    // v2.2.57+131: global orders listener — subscribe once at app lifetime
+    // so order_new/order_updated events arrive regardless of which screen
+    // is open (previously only OnlineOrdersScreen subscribed, and only
+    // while mounted). This makes online orders realtime everywhere.
+    try {
+      RealtimeOrderService.I.start(ref.read(databaseProvider));
+    } catch (_) {}
+
+    // v2.2.57+131: delta sync service — row-level sync between devices
+    // on the same account. Pushes local changes, pulls remote deltas.
+    try {
+      DeltaSyncService.I.start(ref.read(databaseProvider));
     } catch (_) {}
   }
 

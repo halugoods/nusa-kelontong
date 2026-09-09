@@ -1,3 +1,5 @@
+import type { Env } from './index';
+
 /**
  * RoomDO — Durable Object realtime (pengganti 3 channel Supabase).
  *
@@ -5,6 +7,7 @@
  *   backup_updated:{uid}   — broadcast backup baru → device lain pullNow()
  *   ring:{uid}             — broadcast panggilan karyawan (kasir/owner)
  *   orders:{storeId}       — order_new / order_updated (storefront ↔ app)
+ *   sync:{uid}             — broadcast delta sync event ke semua device
  *
  * WebSocket hibernation: koneksi tetap hidup walau DO di-evict; event
  * diserahkan ke stub serverWebSocket.
@@ -61,6 +64,17 @@ export class RoomDO {
   async webSocketClose(_ws: WebSocket): Promise<void> {
     // hibernation API — tidak perlu cleanup eksplisit
   }
+
+  /** Broadcast sync event ke semua WebSocket client yang terhubung. */
+  async broadcastSync(uid: string, tableName: string, ids: string[]) {
+    const event = JSON.stringify({
+      event: 'sync',
+      payload: { uid, table: tableName, ids, at: new Date().toISOString() },
+    });
+    for (const ws of this.state.getWebSockets()) {
+      try { ws.send(event); } catch {}
+    }
+  }
 }
 
 /**
@@ -79,4 +93,21 @@ export async function publishToRoom(
     method: 'POST',
     body: JSON.stringify(event),
   });
+}
+
+/**
+ * Helper worker: broadcast sync event ke RoomDO sync:{uid} channel.
+ * Dipakai fn/sync_delta saat ada delta baru di-push.
+ */
+export async function publishSyncEvent(
+  env: Env,
+  uid: string,
+  tableName: string,
+  ids: string[]
+) {
+  try {
+    const id = env.ROOM.idFromName(`sync:${uid}`);
+    const stub = env.ROOM.get(id);
+    await stub.broadcastSync(uid, tableName, ids);
+  } catch {}
 }

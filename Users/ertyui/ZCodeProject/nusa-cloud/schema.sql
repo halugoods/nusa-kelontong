@@ -326,3 +326,54 @@ ALTER TABLE sheets_settings ADD COLUMN oauth_refresh_token TEXT;
 ALTER TABLE sheets_settings ADD COLUMN oauth_owner_email TEXT;
 -- sheets_registry butuh account_id untuk multi-akun Google.
 ALTER TABLE sheets_registry ADD COLUMN account_id TEXT;
+
+-- ── Performance indexes ─────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_orders_store_created ON online_orders(store_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_store_status ON online_orders(store_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_store_phone ON online_orders(store_id, customer_phone, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_op_store_pub_cat ON online_products(store_id, is_published, category);
+CREATE INDEX IF NOT EXISTS idx_op_store_pub ON online_products(store_id, is_published);
+CREATE INDEX IF NOT EXISTS idx_promos_store_active ON promos(store_id, is_active, end_date);
+CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_activations_license_created ON activations(license_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_branches_store ON branches(store_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_oc_store_phone ON online_customers(store_id, phone);
+
+-- ── sync_queue (delta sync) ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sync_queue (
+  id            TEXT PRIMARY KEY,
+  uid           TEXT NOT NULL,
+  store_id      TEXT NOT NULL,
+  table_name    TEXT NOT NULL,
+  record_id     TEXT NOT NULL,
+  operation     TEXT NOT NULL,
+  data          TEXT,
+  created_at    TEXT NOT NULL,
+  device_id     TEXT NOT NULL,
+  applied       INTEGER NOT NULL DEFAULT 0,
+  applied_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_uid_time ON sync_queue(uid, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_store_table ON sync_queue(store_id, table_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_applied ON sync_queue(applied, created_at DESC);
+
+-- ── sync_devices ────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sync_devices (
+  device_id     TEXT PRIMARY KEY,
+  uid           TEXT NOT NULL,
+  device_name   TEXT,
+  last_seen     TEXT NOT NULL,
+  last_pull     TEXT,
+  ip_address    TEXT,
+  user_agent    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_devices_uid ON sync_devices(uid, last_seen DESC);
+
+-- ── sync_state ──────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sync_state (
+  uid           TEXT PRIMARY KEY,
+  last_delta_id TEXT,
+  last_sync_at  TEXT,
+  delta_count   INTEGER DEFAULT 0,
+  device_count  INTEGER DEFAULT 0
+);

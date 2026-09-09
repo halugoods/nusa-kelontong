@@ -142,6 +142,14 @@ export async function handleRegisterActivation(ctx: FnContext, params: Params): 
             .run();
           emailMatch.google_user_id = googleUserId;
           owned = [emailMatch];
+          // Insert activation record (untuk count di dashboard)
+          try {
+            await env.DB.prepare(
+              'INSERT OR IGNORE INTO activations (id, license_id, google_user_id, device_id) VALUES (?, ?, ?, ?)'
+            )
+              .bind(uid(), emailMatch.id, googleUserId, 'android-' + googleUserId.slice(0, 12))
+              .run();
+          } catch (_) {}
         }
       }
 
