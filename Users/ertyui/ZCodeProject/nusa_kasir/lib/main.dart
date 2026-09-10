@@ -152,6 +152,13 @@ Future<void> _applyPendingRestore() async {
     // v2.2.57+131: tandai lastCloudSeen = now supaya autosync tidak menimpa
     // DB yang baru di-swap dengan backup cloud lama/kosong di launch berikutnya.
     await SecureStore.setLastCloudSeen(DateTime.now());
+    // v2.2.57+133: pulihkan foto dari bucket untuk baris yang imagePath-nya
+    // menunjuk file device asal (arsip +130 tidak mengemas gambar). Jalan
+    // di sini karena ini berada SEBELUM relink startup di urutan main —
+    // relink nanti tetap idempoten (yang file-nya sudah ada di-skip).
+    try {
+      await _relinkImagesFromCloud();
+    } catch (_) {}
   } catch (e) {
     // Keep the marker and pending file so the restore can be retried next launch.
     debugPrint('[Restore] _applyPendingRestore error (will retry): $e');
@@ -389,7 +396,10 @@ Future<void> _uploadBase64ImagesToR2() async {
       final path = pr.imagePath;
       if (path == null || path.isEmpty) continue;
       final filename = p.basename(path);
-      if (!filename.startsWith('product_')) continue;
+      if (!(filename.startsWith('product_') ||
+          filename.startsWith('crop_'))) {
+        continue;
+      }
       try {
         final bytes = base64Decode(b64);
         final remotePath = '$uid/${NusaConfig.productId}/products/$filename';
@@ -452,7 +462,12 @@ Future<void> _relinkImagesFromCloud() async {
         final b64 = pr.imageBase64;
         if (b64 != null && b64.isNotEmpty) continue; // hydrate yang urus
         final name = p.basename(path ?? '');
-        if (name.isEmpty || !name.startsWith('product_')) continue;
+        // v2.2.57+133: terima juga crop_* (hasil crop di product form) —
+        // dulu hanya product_* → foto yang di-crop tidak pernah pulih.
+        if (name.isEmpty ||
+            !(name.startsWith('product_') || name.startsWith('crop_'))) {
+          continue;
+        }
         final restored = await svc.downloadOriginal('products', name);
         if (restored == null) continue;
         await (db.update(db.products)..where((t) => t.id.equals(pr.id)))

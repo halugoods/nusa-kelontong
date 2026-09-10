@@ -235,8 +235,17 @@ class DeltaSyncService {
     try {
       switch (table) {
         case 'products':
-          final companion = _mapToProduct(data);
-          await _db!.into(_db!.products).insertOnConflictUpdate(companion);
+          // v2.2.57+133 (anti-clobber): delta UPDATE parsial (mis. {id,stock}
+          // dari adjustStock) HANYA boleh menulis kolom yang dikirim. Dulu
+          // insertOnConflictUpdate dengan companion penuh menimpa field yang
+          // tidak dikirim dengan default (nama kosong, harga 0, imagePath
+          // NULL) — "foto produk hilang semua" di device penerima.
+          if (data.containsKey('name')) {
+            await _db!.into(_db!.products)
+                .insertOnConflictUpdate(_mapToProduct(data));
+          } else {
+            await _partialUpdate('products', recordId, data, _productCols);
+          }
           // Download image from cloud if product has image_path but local file missing
           final imgPath = data['image_path'] as String?;
           if (imgPath != null && imgPath.isNotEmpty) {
@@ -247,67 +256,171 @@ class DeltaSyncService {
           }
           break;
         case 'transactions':
-          final companion = _mapToTransaction(data);
-          await _db!.into(_db!.transactions).insertOnConflictUpdate(companion);
+          if (data.containsKey('invoice')) {
+            await _db!.into(_db!.transactions)
+                .insertOnConflictUpdate(_mapToTransaction(data));
+          } else {
+            await _partialUpdate('transactions', recordId, data, _txCols);
+          }
           break;
         case 'categories':
           await _upsertCategory(data);
           break;
         case 'customers':
-          final companion = _mapToCustomer(data);
-          await _db!.into(_db!.customers).insertOnConflictUpdate(companion);
+          if (data.containsKey('name')) {
+            await _db!.into(_db!.customers)
+                .insertOnConflictUpdate(_mapToCustomer(data));
+          } else {
+            await _partialUpdate('customers', recordId, data, _customerCols);
+          }
           break;
         case 'roles':
-          final companion = _mapToRole(data);
-          await _db!.into(_db!.roles).insertOnConflictUpdate(companion);
+          // PK = name; upsert by name (access/color full payload).
+          final roleName = data['name'] as String? ?? recordId;
+          final existing = await (_db!.select(_db!.roles)
+                ..where((t) => t.name.equals(roleName)))
+              .getSingleOrNull();
+          if (existing == null) {
+            await _db!.into(_db!.roles).insert(_mapToRole(data));
+          } else {
+            await _partialUpdate('roles', roleName, data, _roleCols);
+          }
           break;
         case 'employees':
-          final companion = _mapToEmployee(data);
-          await _db!.into(_db!.employees).insertOnConflictUpdate(companion);
+          final emp = await (_db!.select(_db!.employees)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (emp == null) {
+            await _db!.into(_db!.employees)
+                .insertOnConflictUpdate(_mapToEmployee(data));
+          } else {
+            await _partialUpdate('employees', recordId, data, _employeeCols);
+          }
           break;
         case 'branches':
-          final companion = _mapToBranch(data);
-          await _db!.into(_db!.branches).insertOnConflictUpdate(companion);
+          final br = await (_db!.select(_db!.branches)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (br == null) {
+            await _db!.into(_db!.branches)
+                .insertOnConflictUpdate(_mapToBranch(data));
+          } else {
+            await _partialUpdate('branches', recordId, data, _branchCols);
+          }
           break;
         case 'promos':
-          final companion = _mapToPromo(data);
-          await _db!.into(_db!.promos).insertOnConflictUpdate(companion);
+          final promo = await (_db!.select(_db!.promos)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (promo == null) {
+            await _db!.into(_db!.promos)
+                .insertOnConflictUpdate(_mapToPromo(data));
+          } else {
+            await _partialUpdate('promos', recordId, data, _promoCols);
+          }
           break;
         case 'suppliers':
-          final companion = _mapToSupplier(data);
-          await _db!.into(_db!.suppliers).insertOnConflictUpdate(companion);
+          final sup = await (_db!.select(_db!.suppliers)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (sup == null) {
+            await _db!.into(_db!.suppliers)
+                .insertOnConflictUpdate(_mapToSupplier(data));
+          } else {
+            await _partialUpdate('suppliers', recordId, data, _supplierCols);
+          }
           break;
         case 'customer_debts':
-          final companion = _mapToDebt(data);
-          await _db!.into(_db!.customerDebts).insertOnConflictUpdate(companion);
+          final debt = await (_db!.select(_db!.customerDebts)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (debt == null) {
+            await _db!.into(_db!.customerDebts)
+                .insertOnConflictUpdate(_mapToDebt(data));
+          } else {
+            await _partialUpdate('customer_debts', recordId, data, _debtCols);
+          }
           break;
         case 'expenses':
-          final companion = _mapToExpense(data);
-          await _db!.into(_db!.expenses).insertOnConflictUpdate(companion);
+          final exp = await (_db!.select(_db!.expenses)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (exp == null) {
+            await _db!.into(_db!.expenses)
+                .insertOnConflictUpdate(_mapToExpense(data));
+          } else {
+            await _partialUpdate('expenses', recordId, data, _expenseCols);
+          }
           break;
         case 'liquidity':
-          final companion = _mapToLiquidity(data);
-          await _db!.into(_db!.liquidity).insertOnConflictUpdate(companion);
+          final liq = await (_db!.select(_db!.liquidity)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (liq == null) {
+            await _db!.into(_db!.liquidity)
+                .insertOnConflictUpdate(_mapToLiquidity(data));
+          } else {
+            await _partialUpdate('liquidity', recordId, data, _liquidityCols);
+          }
           break;
         case 'attendance':
-          final companion = _mapToAttendance(data);
-          await _db!.into(_db!.attendance).insertOnConflictUpdate(companion);
+          final att = await (_db!.select(_db!.attendance)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (att == null) {
+            await _db!.into(_db!.attendance)
+                .insertOnConflictUpdate(_mapToAttendance(data));
+          } else {
+            await _partialUpdate('attendance', recordId, data, _attendanceCols);
+          }
           break;
         case 'online_orders':
-          final companion = _mapToOnlineOrder(data);
-          await _db!.into(_db!.onlineOrders).insertOnConflictUpdate(companion);
+          final oo = await (_db!.select(_db!.onlineOrders)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (oo == null) {
+            await _db!.into(_db!.onlineOrders)
+                .insertOnConflictUpdate(_mapToOnlineOrder(data));
+          } else {
+            await _partialUpdate(
+                'online_orders', recordId, data, _onlineOrderCols);
+          }
           break;
         case 'settings':
           await _applySettingsDelta(data);
           break;
         case 'waste':
-          await _db!.into(_db!.waste).insertOnConflictUpdate(_mapToWaste(data));
+          final ws = await (_db!.select(_db!.waste)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (ws == null) {
+            await _db!.into(_db!.waste).insertOnConflictUpdate(_mapToWaste(data));
+          } else {
+            await _partialUpdate('waste', recordId, data, _wasteCols);
+          }
           break;
         case 'payroll':
-          await _db!.into(_db!.payroll).insertOnConflictUpdate(_mapToPayroll(data));
+          final pr = await (_db!.select(_db!.payroll)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (pr == null) {
+            await _db!.into(_db!.payroll)
+                .insertOnConflictUpdate(_mapToPayroll(data));
+          } else {
+            await _partialUpdate('payroll', recordId, data, _payrollCols);
+          }
           break;
         case 'recurring_expenses':
-          await _db!.into(_db!.recurringExpenses).insertOnConflictUpdate(_mapToRecurring(data));
+          final re = await (_db!.select(_db!.recurringExpenses)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (re == null) {
+            await _db!.into(_db!.recurringExpenses)
+                .insertOnConflictUpdate(_mapToRecurring(data));
+          } else {
+            await _partialUpdate(
+                'recurring_expenses', recordId, data, _recurringCols);
+          }
           break;
         case 'expense_categories':
           final ecId = data['id'] as int? ?? 0;
@@ -322,28 +435,352 @@ class DeltaSyncService {
           }
           break;
         case 'debt_payments':
-          await _db!.into(_db!.debtPayments).insertOnConflictUpdate(_mapToDebtPayment(data));
+          final dp = await (_db!.select(_db!.debtPayments)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (dp == null) {
+            await _db!.into(_db!.debtPayments)
+                .insertOnConflictUpdate(_mapToDebtPayment(data));
+          } else {
+            await _partialUpdate(
+                'debt_payments', recordId, data, _debtPaymentCols);
+          }
           break;
         case 'purchase_orders':
-          await _db!.into(_db!.purchaseOrders).insertOnConflictUpdate(_mapToPurchaseOrder(data));
+          final po = await (_db!.select(_db!.purchaseOrders)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (po == null) {
+            await _db!.into(_db!.purchaseOrders)
+                .insertOnConflictUpdate(_mapToPurchaseOrder(data));
+          } else {
+            await _partialUpdate(
+                'purchase_orders', recordId, data, _purchaseOrderCols);
+          }
           break;
         case 'stock_counts':
-          await _db!.into(_db!.stockCounts).insertOnConflictUpdate(_mapToStockCount(data));
+          final sc = await (_db!.select(_db!.stockCounts)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (sc == null) {
+            await _db!.into(_db!.stockCounts)
+                .insertOnConflictUpdate(_mapToStockCount(data));
+          } else {
+            await _partialUpdate('stock_counts', recordId, data, _stockCountCols);
+          }
           break;
         case 'stock_count_items':
-          await _db!.into(_db!.stockCountItems).insertOnConflictUpdate(_mapToStockCountItem(data));
+          final sci = await (_db!.select(_db!.stockCountItems)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (sci == null) {
+            await _db!.into(_db!.stockCountItems)
+                .insertOnConflictUpdate(_mapToStockCountItem(data));
+          } else {
+            await _partialUpdate(
+                'stock_count_items', recordId, data, _stockCountItemCols);
+          }
           break;
         case 'print_orders':
-          await _db!.into(_db!.printOrders).insertOnConflictUpdate(_mapToPrintOrder(data));
+          final pord = await (_db!.select(_db!.printOrders)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (pord == null) {
+            await _db!.into(_db!.printOrders)
+                .insertOnConflictUpdate(_mapToPrintOrder(data));
+          } else {
+            await _partialUpdate('print_orders', recordId, data, _printOrderCols);
+          }
           break;
         case 'point_histories':
-          await _db!.into(_db!.pointHistories).insertOnConflictUpdate(_mapToPointHistory(data));
+          final ph = await (_db!.select(_db!.pointHistories)
+                ..where((t) => t.id.equals(int.tryParse(recordId) ?? 0)))
+              .getSingleOrNull();
+          if (ph == null) {
+            await _db!.into(_db!.pointHistories)
+                .insertOnConflictUpdate(_mapToPointHistory(data));
+          } else {
+            await _partialUpdate(
+                'point_histories', recordId, data, _pointHistoryCols);
+          }
           break;
       }
     } catch (_) {
       // Non-fatal — delta apply failure should not break the app
     }
   }
+
+  /// v2.2.57+133 (anti-clobber): UPDATE parsial — tulis HANYA kolom yang ada
+  /// di payload. Nilai dikonversi sesuai tipe kolom drift; JSON-encoded text
+  /// (accessJson) sudah string dari push. Baris tidak ada → di-skip (push
+  /// INSERT yang sesuai akan datang dari device sumber).
+  Future<void> _partialUpdate(
+    String sqlTable,
+    String recordId,
+    Map<String, dynamic> data,
+    Map<String, String> cols, // jsonKey → SQL column
+  ) async {
+    final id = int.tryParse(recordId);
+    final fields = <String, dynamic>{};
+    for (final entry in cols.entries) {
+      if (!data.containsKey(entry.key)) continue;
+      if (entry.key == 'id') continue; // PK tidak ikut SET
+      fields[entry.value] = data[entry.key];
+    }
+    if (fields.isEmpty) return;
+    final whereCol = id != null ? 'id' : 'name'; // roles/categori by name
+    final whereVal = id != null ? id : recordId;
+    final sets = fields.keys.map((f) => '$f = ?').join(', ');
+    await _db!.customStatement(
+      'UPDATE $sqlTable SET $sets WHERE $whereCol = ?',
+      [...fields.values, whereVal],
+    );
+  }
+
+  /// Kolom SQL untuk update parsial (jsonKey → SQL column).
+  /// camelCase drift → snake_case SQLite.
+  static const _productCols = <String, String>{
+    'name': 'name',
+    'sku': 'sku',
+    'barcode': 'barcode',
+    'category': 'category',
+    'buy_price': 'buy_price',
+    'sell_price': 'sell_price',
+    'discount_percent': 'discount_percent',
+    'discount_type': 'discount_type',
+    'stock': 'stock',
+    'min_stock': 'min_stock',
+    'image_path': 'image_path',
+    'image_base64': 'image_base64',
+    'is_service': 'is_service',
+    'is_online': 'is_online',
+    'expiry_date': 'expiry_date',
+    'product_type': 'product_type',
+    'variants_json': 'variants_json',
+    'wholesale_json': 'wholesale_json',
+    'price_type': 'price_type',
+    'supplier_id': 'supplier_id',
+  };
+  static const _txCols = <String, String>{
+    'invoice': 'invoice',
+    'items': 'items',
+    'total': 'total',
+    'discount': 'discount',
+    'payment_method': 'payment_method',
+    'customer_id': 'customer_id',
+    'cash_given': 'cash_given',
+    'cash_return': 'cash_return',
+    'cashier_name': 'cashier_name',
+    'branch_id': 'branch_id',
+    'employee_id': 'employee_id',
+    'session_id': 'session_id',
+    'status': 'status',
+    'void_reason': 'void_reason',
+    'voided_at': 'voided_at',
+    'order_type': 'order_type',
+    'table_id': 'table_id',
+    'notes': 'notes',
+    'dp_amount': 'dp_amount',
+    'installment_months': 'installment_months',
+    'installment_per_month': 'installment_per_month',
+    'debt_id': 'debt_id',
+  };
+  static const _customerCols = <String, String>{
+    'name': 'name',
+    'phone': 'phone',
+    'address': 'address',
+    'barcode': 'barcode',
+    'points': 'points',
+    'totalSpent': 'total_spent',
+    'level': 'level',
+  };
+  static const _roleCols = <String, String>{
+    'color': 'color',
+    'access': 'access_json',
+  };
+  static const _employeeCols = <String, String>{
+    'name': 'name',
+    'pin': 'pin',
+    'role': 'role',
+    'branch_id': 'branch_id',
+    'status': 'status',
+    'phone': 'phone',
+    'photo_path': 'photo_path',
+    'base_salary': 'base_salary',
+    'start_date': 'start_date',
+    'nfc_tag': 'nfc_tag',
+    'barcode': 'barcode',
+    'photo_base64': 'photo_base64',
+    'work_start': 'work_start',
+    'work_end': 'work_end',
+    'requires_attendance': 'requires_attendance',
+    'requires_cash_open': 'requires_cash_open',
+    'requires_cash_close': 'requires_cash_close',
+    'is_service_staff': 'is_service_staff',
+    'commission_percent': 'commission_percent',
+  };
+  static const _branchCols = <String, String>{
+    'name': 'name',
+    'address': 'address',
+    'phone': 'phone',
+    'status': 'status',
+  };
+  static const _promoCols = <String, String>{
+    'name': 'name',
+    'code': 'code',
+    'type': 'type',
+    'value': 'value',
+    'minBelanja': 'min_belanja',
+    'startDate': 'start_date',
+    'endDate': 'end_date',
+    'maxUses': 'max_uses',
+    'usedCount': 'used_count',
+    'status': 'status',
+    'mode': 'mode',
+  };
+  static const _supplierCols = <String, String>{
+    'name': 'name',
+    'phone': 'phone',
+    'address': 'address',
+    'contactPerson': 'contact_person',
+    'note': 'note',
+  };
+  static const _debtCols = <String, String>{
+    'customerId': 'customer_id',
+    'customerName': 'customer_name',
+    'amount': 'amount',
+    'remainingAmount': 'remaining_amount',
+    'description': 'description',
+    'debtDate': 'debt_date',
+    'dueDate': 'due_date',
+    'status': 'status',
+    'installmentMonths': 'installment_months',
+  };
+  static const _expenseCols = <String, String>{
+    'category': 'category',
+    'description': 'description',
+    'amount': 'amount',
+    'branchId': 'branch_id',
+    'date': 'date',
+  };
+  static const _liquidityCols = <String, String>{
+    'type': 'type',
+    'category': 'category',
+    'description': 'description',
+    'amount': 'amount',
+    'method': 'method',
+    'branchId': 'branch_id',
+    'date': 'date',
+  };
+  static const _attendanceCols = <String, String>{
+    'employeeId': 'employee_id',
+    'date': 'date',
+    'checkIn': 'check_in',
+    'checkOut': 'check_out',
+    'pettyCash': 'petty_cash',
+    'finalCash': 'final_cash',
+    'status': 'status',
+    'expectedCash': 'expected_cash',
+    'shiftNotes': 'shift_notes',
+  };
+  static const _onlineOrderCols = <String, String>{
+    'invoice': 'invoice',
+    'customerName': 'customer_name',
+    'customerPhone': 'customer_phone',
+    'items': 'items',
+    'subtotal': 'subtotal',
+    'discount': 'discount',
+    'handlingFee': 'handling_fee',
+    'total': 'total',
+    'paymentMethod': 'payment_method',
+    'pickupTime': 'pickup_time',
+    'branch': 'branch',
+    'notes': 'notes',
+    'status': 'status',
+    'processedBy': 'processed_by',
+  };
+  static const _wasteCols = <String, String>{
+    'productId': 'product_id',
+    'qty': 'qty',
+    'reason': 'reason',
+    'type': 'type',
+    'date': 'date',
+  };
+  static const _payrollCols = <String, String>{
+    'employeeId': 'employee_id',
+    'period': 'period',
+    'salary': 'salary',
+    'bonus': 'bonus',
+    'deduction': 'deduction',
+    'notes': 'notes',
+    'status': 'status',
+    'date': 'date',
+  };
+  static const _recurringCols = <String, String>{
+    'category': 'category',
+    'amount': 'amount',
+    'description': 'description',
+    'frequency': 'frequency',
+    'nextDate': 'next_date',
+    'active': 'active',
+  };
+  static const _debtPaymentCols = <String, String>{
+    'debtId': 'debt_id',
+    'amount': 'amount',
+    'method': 'method',
+    'notes': 'notes',
+    'paidAt': 'paid_at',
+    'branchId': 'branch_id',
+  };
+  static const _purchaseOrderCols = <String, String>{
+    'invoice': 'invoice',
+    'supplierId': 'supplier_id',
+    'supplierName': 'supplier_name',
+    'total': 'total',
+    'note': 'note',
+    'date': 'date',
+  };
+  static const _stockCountCols = <String, String>{
+    'name': 'name',
+    'status': 'status',
+    'totalProducts': 'total_products',
+    'matchCount': 'match_count',
+    'diffCount': 'diff_count',
+    'completedAt': 'completed_at',
+  };
+  static const _stockCountItemCols = <String, String>{
+    'countSessionId': 'count_session_id',
+    'productId': 'product_id',
+    'productName': 'product_name',
+    'systemStock': 'system_stock',
+    'physicalStock': 'physical_stock',
+    'difference': 'difference',
+    'buyPrice': 'buy_price',
+    'sellPrice': 'sell_price',
+  };
+  static const _printOrderCols = <String, String>{
+    'customerName': 'customer_name',
+    'customerPhone': 'customer_phone',
+    'serviceType': 'service_type',
+    'pages': 'pages',
+    'copies': 'copies',
+    'paperSize': 'paper_size',
+    'widthCm': 'width_cm',
+    'lengthCm': 'length_cm',
+    'estimateReady': 'estimate_ready',
+    'total': 'total',
+    'notes': 'notes',
+    'status': 'status',
+    'customFieldsJson': 'custom_fields_json',
+  };
+  static const _pointHistoryCols = <String, String>{
+    'customerId': 'customer_id',
+    'type': 'type',
+    'points': 'points',
+    'transactionId': 'transaction_id',
+    'note': 'note',
+    'date': 'date',
+  };
 
   Future<void> _deleteRecord(String table, String recordId) async {
     final id = int.tryParse(recordId);
@@ -450,18 +887,16 @@ class DeltaSyncService {
     }
   }
 
-  CategoriesCompanion _mapToCategory(Map<String, dynamic> data) {
-    return CategoriesCompanion(
-      id: Value(data['id'] as int? ?? 0),
-      name: Value(data['name'] as String? ?? ''),
-    );
-  }
-
   CustomersCompanion _mapToCustomer(Map<String, dynamic> data) {
     return CustomersCompanion(
       id: Value(data['id'] as int? ?? 0),
       name: Value(data['name'] as String? ?? ''),
       phone: Value(data['phone'] as String?),
+      address: Value(data['address'] as String?),
+      barcode: Value(data['barcode'] as String?),
+      points: Value(data['points'] as int? ?? 0),
+      totalSpent: Value(data['totalSpent'] as int? ?? 0),
+      level: Value(data['level'] as String? ?? 'Silver'),
     );
   }
 
@@ -479,14 +914,15 @@ class DeltaSyncService {
     return EmployeesCompanion(
       id: Value(data['id'] as int? ?? 0),
       name: Value(data['name'] as String? ?? ''),
-      pin: Value(data['pin'] as String? ?? ''),
-      role: Value(data['role'] as String? ?? ''),
+      pin: Value(data['pin'] as String? ?? '1234'),
+      role: Value(data['role'] as String? ?? 'kasir'),
       phone: Value(data['phone'] as String?),
       photoPath: Value(data['photo_path'] as String?),
+      photoBase64: Value(data['photo_base64'] as String?),
       status: Value(data['status'] as String?),
       branchId: Value(data['branch_id'] as int?),
       isServiceStaff: Value(data['is_service_staff'] as bool? ?? true),
-      commissionPercent: Value(data['commission_percent'] as double? ?? 10.0),
+      commissionPercent: Value((data['commission_percent'] as num?)?.toDouble() ?? 10.0),
     );
   }
 
@@ -531,6 +967,9 @@ class DeltaSyncService {
       address: Value(data['address'] as String?),
       contactPerson: Value(data['contactPerson'] as String?),
       note: Value(data['note'] as String?),
+      createdAt: Value(data['createdAt'] != null
+          ? DateTime.tryParse(data['createdAt'] as String) ?? DateTime.now()
+          : DateTime.now()),
     );
   }
 
@@ -608,6 +1047,9 @@ class DeltaSyncService {
       total: Value(data['total'] as int? ?? 0),
       status: Value(data['status'] as String? ?? 'Online Baru'),
       processedBy: Value(data['processedBy'] as String?),
+      createdAt: Value(data['createdAt'] != null
+          ? DateTime.tryParse(data['createdAt'] as String) ?? DateTime.now()
+          : DateTime.now()),
     );
   }
 
@@ -690,6 +1132,9 @@ class DeltaSyncService {
       totalProducts: Value(data['totalProducts'] as int? ?? 0),
       matchCount: Value(data['matchCount'] as int? ?? 0),
       diffCount: Value(data['diffCount'] as int? ?? 0),
+      createdAt: Value(data['createdAt'] != null
+          ? DateTime.tryParse(data['createdAt'] as String) ?? DateTime.now()
+          : DateTime.now()),
       completedAt: Value(data['completedAt'] != null
           ? DateTime.tryParse(data['completedAt'] as String)
           : null),
@@ -725,6 +1170,9 @@ class DeltaSyncService {
       total: Value(data['total'] as int? ?? 0),
       notes: Value(data['notes'] as String?),
       status: Value(data['status'] as String? ?? 'Baru'),
+      createdAt: Value(data['createdAt'] != null
+          ? DateTime.tryParse(data['createdAt'] as String) ?? DateTime.now()
+          : DateTime.now()),
       customFieldsJson: Value(data['customFieldsJson'] as String?),
     );
   }
@@ -810,6 +1258,63 @@ class DeltaSyncService {
       }
     } catch (e) {
       debugPrint('[DeltaSync] image hydrate failed: $e');
+    }
+  }
+
+  /// v2.2.57+133: pulihkan SEMUA foto produk & karyawan dari bucket R2 untuk
+  /// baris yang imagePath menunjuk file yang tidak ada dan base64 kosong.
+  /// Dipanggil setelah restore sukses (aktivasi / pending-restore) — dulu
+  /// relink hanya jalan di main() startup, jadi restore via layar aktivasi
+  /// tidak pernah memulihkan foto sampai restart kedua.
+  Future<void> hydrateAllImages() async {
+    if (_db == null) return;
+    final uid = _uid ?? await SecureStore.resolveCanonicalUid();
+    if (uid == null) return;
+    final svc = ImageStorageService(uid);
+    try {
+      // ── Produk ──
+      final rows = await _db!.select(_db!.products).get();
+      for (final pr in rows) {
+        final path = pr.imagePath;
+        final hasFile = path != null &&
+            path.isNotEmpty &&
+            await File(path).exists();
+        if (hasFile) continue;
+        final b64 = pr.imageBase64;
+        if (b64 != null && b64.isNotEmpty) continue; // hydrate base64 yang urus
+        final name = path?.split('/').last ?? '';
+        if (name.isEmpty) continue;
+        // Gate longgar: product_/photo_/crop_ (hasil crop dari form) —
+        // dulu cuma product_/photo_ → foto crop_ tidak pernah pulih.
+        if (!(name.startsWith('product_') || name.startsWith('crop_'))) {
+          continue;
+        }
+        final restored = await svc.downloadOriginal('products', name);
+        if (restored == null) continue;
+        await (_db!.update(_db!.products)..where((t) => t.id.equals(pr.id)))
+            .write(ProductsCompanion(imagePath: Value(restored)));
+        debugPrint('[DeltaSync] hydrateAllImages: product ${pr.id} → $restored');
+      }
+      // ── Karyawan ──
+      final emps = await _db!.select(_db!.employees).get();
+      for (final em in emps) {
+        final path = em.photoPath;
+        final hasFile = path != null &&
+            path.isNotEmpty &&
+            await File(path).exists();
+        if (hasFile) continue;
+        final b64 = em.photoBase64;
+        if (b64 != null && b64.isNotEmpty) continue;
+        final name = path?.split('/').last ?? '';
+        if (name.isEmpty || !name.startsWith('photo_')) continue;
+        final restored = await svc.downloadOriginal('employees', name);
+        if (restored == null) continue;
+        await (_db!.update(_db!.employees)..where((t) => t.id.equals(em.id)))
+            .write(EmployeesCompanion(photoPath: Value(restored)));
+        debugPrint('[DeltaSync] hydrateAllImages: employee ${em.id} → $restored');
+      }
+    } catch (e) {
+      debugPrint('[DeltaSync] hydrateAllImages error: $e');
     }
   }
 

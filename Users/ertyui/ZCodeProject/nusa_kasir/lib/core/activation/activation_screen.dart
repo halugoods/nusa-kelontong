@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/google_auth_service.dart';
 import 'package:nusa_kasir/core/services/account_auth_service.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/utils/icon_loader.dart';
 import 'package:nusa_kasir/core/utils/permission_helper.dart';
 import 'package:nusa_kasir/core/providers.dart';
@@ -542,6 +543,13 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
     final ok = await repo.restoreDirect();
     if (ok && mounted) {
       TopToast.success(context, 'Data berhasil dipulihkan');
+      // v2.2.57+133: pulihkan foto produk/karyawan dari bucket SEKARANG —
+      // restore membawa path absolut device asal (file tidak ada di sini)
+      // dan arsip backup sudah tidak mengemas gambar (+130). Dulu relink
+      // cuma jalan di main() startup → foto hilang sampai restart kedua.
+      try {
+        await DeltaSyncService.I.hydrateAllImages();
+      } catch (_) {}
       if (context.canPop()) {
         Navigator.of(context).popUntil((r) => r.isFirst);
       }
