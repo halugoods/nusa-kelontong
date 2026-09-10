@@ -5,6 +5,7 @@ import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'tables.dart';
+import 'sync_triggers.dart';
 part 'app_database.g.dart';
 
 @DriftDatabase(
@@ -87,6 +88,13 @@ class AppDatabase extends _$AppDatabase {
         await _repairNullDefaults(this);
       } catch (e) {
         debugPrint('[DB] beforeOpen repair error (non-fatal): $e');
+      }
+      // v2.2.57+134: trigger delta-sync (capture semua perubahan → outbox).
+      // Idempoten; jangan biarkan error trigger mematikan app.
+      try {
+        await installDeltaSyncTriggers(this);
+      } catch (e) {
+        debugPrint('[DB] sync triggers install error (non-fatal): $e');
       }
     },
     onUpgrade: (m, from, to) async {

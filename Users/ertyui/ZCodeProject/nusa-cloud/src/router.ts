@@ -165,6 +165,36 @@ export class Router {
         await bucket.put(objPath, bytes, {
           httpMetadata: { contentType: req.headers.get('Content-Type') ?? 'application/octet-stream' },
         });
+
+        // v2.2.57+134 (cloud fix): sidecar metadata.json untuk backup arsip.
+        // App (getBackupTimestamp) membaca `nusa-backups/{uid}/{product}/
+        // metadata.json` untuk tahu umur backup cloud — sejak metadata
+        // dipindah ke dalam arsip (v2.2.57), tidak ada yang menulis sidecar
+        // ini → app selalu anggap "cloud tidak terbukti lebih baru" → status
+        // sinkron tidak pernah menunjukkan timestamp (keluhan user).
+        // Menulis di sini mencakup SEMUA jalur upload backup.
+        if (bucketName === 'nusa-backups' && objPath.endsWith('/backup.sqlite.enc')) {
+          try {
+            const slashIdx = objPath.lastIndexOf('/');
+            const dir = objPath.slice(0, slashIdx);
+            const backupSize = bytes.byteLength;
+            const sidecar = {
+              path: objPath,
+              size: backupSize,
+              updated_at: new Date().toISOString(),
+              appVersion: req.headers.get('X-App-Version') ?? null,
+              deviceId: req.headers.get('X-Device-Id') ?? null,
+            };
+            await bucket.put(`${dir}/metadata.json`, JSON.stringify(sidecar), {
+              httpMetadata: {
+                contentType: 'application/json',
+              },
+            });
+          } catch (e: any) {
+            console.error('backup sidecar write failed:', e?.message);
+          }
+        }
+
         return json({ ok: true, path: objPath });
       }
 

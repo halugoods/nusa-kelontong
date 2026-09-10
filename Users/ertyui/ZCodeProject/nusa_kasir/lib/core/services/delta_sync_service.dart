@@ -10,6 +10,8 @@ import 'package:nusa_kasir/core/services/image_storage_service.dart';
 import 'package:nusa_kasir/core/services/realtime_sync_service.dart';
 import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
+import 'package:nusa_kasir/data/database/sync_triggers.dart'
+    show setSyncMuted, syncPkColumnFor;
 
 /// Delta sync event for UI refresh.
 class DeltaEvent {
@@ -66,6 +68,10 @@ class DeltaSyncService {
 
     // Fallback periodic pull
     _periodicPull = Timer.periodic(_pullInterval, (_) => _pull());
+
+    // v2.2.57+134: flush sisa outbox dari sesi sebelumnya + outbox yg
+    // tertimbun saat offline (retry stranded flush).
+    _scheduleFlush();
   }
 
   Future<void> _registerDevice() async {
@@ -81,74 +87,169 @@ class DeltaSyncService {
     } catch (_) {}
   }
 
-  /// Call this from saveTransaction, product save, etc. to announce a
-  /// local change so other devices can pull it within seconds.
+  /// v2.2.57+134: pushDelta manual TIDAK DIPAKAI LAGI — semua perubahan
+  /// di-capture trigger SQLite ke outbox `sync_outbox` (lihat
+  /// sync_triggers.dart). Fungsi ini tinggal demi kompatibilitas call-site
+  /// lama: outbox trigger akan mencatat perubahan yang sama, jadi cukup
+  /// pastikan flush jalan.
   Future<void> pushDelta({
     required String table,
     required String recordId,
     required String operation, // INSERT, UPDATE, DELETE
     Map<String, dynamic>? data,
   }) async {
-    if (_db == null || _uid == null) return;
-
-    final delta = {
-      'id': _uuid(),
-      'table': table,
-      'record_id': recordId,
-      'operation': operation,
-      'data': data != null ? jsonEncode(data) : null,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-      'device_id': _deviceId,
-    };
-
-    // Save to local SyncQueue outbox
-    await _db!.into(_db!.syncQueue).insert(
-          SyncQueueCompanion.insert(
-            taskType: 'delta_push',
-            payload: jsonEncode(delta),
-          ),
-        );
-
-    // Debounced push
-    _pushTimer?.cancel();
-    _pushTimer = Timer(_pushDebounce, _flushPending);
+    _scheduleFlush();
   }
 
-  Future<void> _flushPending() async {
-    if (_db == null) return;
+  void _scheduleFlush() {
+    _pushTimer?.cancel();
+    _pushTimer = Timer(_pushDebounce, _flushOutbox);
+  }
 
-    final pending = await (_db!.select(_db!.syncQueue)
-          ..where((t) =>
-              t.status.equals('pending') & t.taskType.equals('delta_push'))
-          ..limit(_maxBatchSize))
-        .get();
-
-    if (pending.isEmpty) return;
-
-    final deltas = pending.map((row) {
-      final payload = jsonDecode(row.payload) as Map<String, dynamic>;
-      return payload;
-    }).toList();
+  /// v2.2.57+134: flush outbox hasil trigger — ambil baris TERAKHIR per
+  /// (table, pk), baca snapshot datanya langsung dari DB, kirim ke cloud.
+  /// Beberapa UPDATE ke baris sama otomatis kolaps; DELETE tanpa payload.
+  Future<void> _flushOutbox() async {
+    if (_db == null || _uid == null || _deviceId == null) return;
 
     try {
+      // 1. Kandidat = baris terakhir per (table_name, record_pk).
+      final rows = await _db!.customSelect('''
+        SELECT o.table_name, o.record_pk, o.operation, MAX(o.id) AS max_id
+        FROM sync_outbox o
+        GROUP BY o.table_name, o.record_pk
+        LIMIT ?
+      ''', variables: [Variable.withInt(_maxBatchSize * 2)]).get();
+
+      if (rows.isEmpty) return;
+
+      // Batasi ke ukuran batch menurut id terkecil supaya FIFO.
+      final sorted = rows.toList()
+        ..sort((a, b) => (a.data['max_id'] as int).compareTo(b.data['max_id'] as int));
+      final batch = sorted.take(_maxBatchSize).toList();
+      final maxIdInBatch =
+          batch.map((r) => r.data['max_id'] as int).reduce((a, b) => a > b ? a : b);
+
+      final deltas = <Map<String, dynamic>>[];
+
+      for (final row in batch) {
+        final table = '${row.data['table_name']}';
+        final pk = '${row.data['record_pk']}';
+        final op = '${row.data['operation']}';
+        if (table.isEmpty || pk.isEmpty) continue;
+
+        // 2. Snapshot data dari DB utk INSERT/UPDATE.
+        Map<String, dynamic>? data;
+        if (op != 'DELETE') {
+          data = await _snapshotRow(table, pk);
+          if (data == null) {
+            // Baris sudah hilang (di-DELETE setelah INSERT/UPDATE) →
+            // kirim DELETE supaya device lain ikut menghapus.
+            deltas.add({
+              'id': _uuid(),
+              'table': table,
+              'record_id': pk,
+              'operation': 'DELETE',
+              'data': null,
+              'created_at': DateTime.now().toUtc().toIso8601String(),
+              'device_id': _deviceId,
+            });
+            continue;
+          }
+        }
+
+        deltas.add({
+          'id': _uuid(),
+          'table': table,
+          'record_id': pk,
+          'operation': op == 'INSERT' ? 'INSERT' : op,
+          'data': data != null ? jsonEncode(data) : null,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          'device_id': _deviceId,
+        });
+      }
+
+      if (deltas.isEmpty) {
+        // Tidak ada delta valid — bersihkan outbox sampai max id batch.
+        await _db!.customStatement(
+          'DELETE FROM sync_outbox WHERE id <= ?',
+          [maxIdInBatch],
+        );
+        return;
+      }
+
+      // 3. Push (dengan device_id! — sebelumnya 401 karena tidak dikirim).
       final result = await CloudGateway.shared.invoke('sync-delta', body: {
         'action': 'push',
         'deltas': deltas,
         'uid': _uid!,
         'google_user_id': _uid!,
+        'device_id': _deviceId!,
       });
 
       if (result.ok) {
-        // Mark as pushed
-        for (final row in pending) {
-          await (_db!.update(_db!.syncQueue)
-                ..where((t) => t.id.equals(row.id)))
-              .write(const SyncQueueCompanion(status: Value('pushed')));
-        }
+        await _db!.customStatement(
+          'DELETE FROM sync_outbox WHERE id <= ?',
+          [maxIdInBatch],
+        );
+      } else {
+        debugPrint('[DeltaSync] push failed (${result.status}): ${result.error ?? result.data}');
+        _scheduleFlushRetry();
       }
     } catch (e) {
-      debugPrint('[DeltaSync] push error: $e');
+      debugPrint('[DeltaSync] flush error: $e');
+      _scheduleFlushRetry();
     }
+  }
+
+  /// Retry backoff sederhana untuk flush yang gagal (offline / 5xx) —
+  /// sebelumnya delta stranded sampai perubahan berikutnya.
+  void _scheduleFlushRetry() {
+    _pushTimer?.cancel();
+    _pushTimer = Timer(const Duration(seconds: 10), _flushOutbox);
+  }
+
+  /// Ambil satu baris sebagai map jsonKey → nilai (siap di-encode JSON).
+  /// Mapping snake_case kolom → camelCase jsonKey dilakukan terbalik dari
+  /// _xxxCols supaya apply-side (_partialUpdate/_mapToXxx) menerima bentuk
+  /// yang sama dengan pushDelta lama. Tabel tanpa map → select * apa adanya
+  /// (kolom snake_case tetap konsisten dengan _cols di apply-side).
+  Future<Map<String, dynamic>?> _snapshotRow(String table, String pk) async {
+    try {
+      final pkCol = syncPkColumnFor(table);
+      final row = await _db!.customSelect(
+        'SELECT * FROM $table WHERE $pkCol = ? LIMIT 1',
+        variables: [Variable.withString(pk)],
+      ).getSingleOrNull();
+      if (row == null) return null;
+      final data = Map<String, dynamic>.from(row.data);
+      // image_base64/photo_base64 TIDAK ikut delta (besar & redundan —
+      // gambar tersimpan di R2; apply-side hydrate dari R2).
+      data.remove('image_base64');
+      data.remove('photo_base64');
+      // DateTime drift dibaca sebagai int (ms epoch) — ubah ke string ISO
+      // supaya apply-side DateTime.tryParse bisa mem-parse.
+      for (final e in data.entries.toList()) {
+        if (e.value is int && _looksLikeDatetimeColumn(table, e.key)) {
+          data[e.key] = DateTime.fromMillisecondsSinceEpoch(e.value as int)
+              .toUtc()
+              .toIso8601String();
+        }
+      }
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _looksLikeDatetimeColumn(String table, String col) {
+    // Kolom datetime drift (snake_case) yang ada di tabel synced.
+    const dtCols = <String>{
+      'date', 'created_at', 'updated_at', 'expiry_date', 'voided_at',
+      'opened_at', 'closed_at', 'start_date', 'end_date', 'due_date',
+      'debt_date', 'paid_at', 'next_date', 'joined_at', 'last_backup_at',
+    };
+    return dtCols.contains(col);
   }
 
   Future<void> _pull() async {
@@ -161,6 +262,10 @@ class DeltaSyncService {
         'since': lastPull?.toIso8601String(),
         'uid': _uid!,
         'google_user_id': _uid!,
+        // v2.2.57+134: WAJIB — sebelumnya tidak dikirim → worker deviceWrap
+        // menolak 401 (device_id tidak ada) DAN filter device_id != 'unknown'
+        // salah sehingga device bisa menarik delta-nya sendiri.
+        if (_deviceId != null) 'device_id': _deviceId!,
       });
 
       if (!result.ok) return;
@@ -171,11 +276,20 @@ class DeltaSyncService {
       final deltas = (data['deltas'] as List?) ?? [];
       final deltaIds = <String>[];
 
-      for (final d in deltas) {
-        if (d is! Map) continue;
-        final delta = Map<String, dynamic>.from(d);
-        await _applyDelta(delta);
-        deltaIds.add(delta['id'] as String? ?? '');
+      if (deltas.isNotEmpty) {
+        // v2.2.57+134: mute trigger selama apply — tulisan hasil apply tidak
+        // boleh masuk outbox lagi (ping-pong antar device tanpa ujung).
+        await setSyncMuted(_db!, true);
+        try {
+          for (final d in deltas) {
+            if (d is! Map) continue;
+            final delta = Map<String, dynamic>.from(d);
+            await _applyDelta(delta);
+            deltaIds.add(delta['id'] as String? ?? '');
+          }
+        } finally {
+          await setSyncMuted(_db!, false);
+        }
       }
 
       // Ack received deltas
@@ -185,6 +299,7 @@ class DeltaSyncService {
           'delta_ids': deltaIds,
           'uid': _uid!,
           'google_user_id': _uid!,
+          if (_deviceId != null) 'device_id': _deviceId!,
         });
       }
 
@@ -197,9 +312,12 @@ class DeltaSyncService {
   Future<void> _applyDelta(Map<String, dynamic> delta) async {
     if (_db == null) return;
 
-    final table = delta['table'] as String? ?? '';
+    // v2.2.57+134: server D1 sync_queue kolomnya table_name/operation —
+    // dulu app baca 'table' → selalu kosong → apply no-op diam-diam!
+    final table = (delta['table'] ?? delta['table_name']) as String? ?? '';
     final recordId = delta['record_id'] as String? ?? '';
-    final operation = delta['operation'] as String? ?? '';
+    final operation =
+        (delta['operation'] ?? delta['op']) as String? ?? '';
     final dataStr = delta['data'] as String?;
 
     try {

@@ -98,6 +98,16 @@ export async function publishToRoom(
 /**
  * Helper worker: broadcast sync event ke RoomDO sync:{uid} channel.
  * Dipakai fn/sync_delta saat ada delta baru di-push.
+ *
+ * v2.2.57+134 (cloud fix):
+ * 1. Ganti stub.broadcastSync() (RPC langsung — silent fail di prod, tidak
+ *    pernah sampai) dengan publishToRoom() — pola yang sama dengan
+ *    orders realtime yang terbukti jalan.
+ * 2. BRIDGE realtime: app mendengarkan HANYA event 'backup_updated' di
+ *    channel 'backup_updated:{uid}' (RealtimeSyncService). Event 'sync' di
+ *    'sync:{uid}' tidak pernah dikonsumsi siapa-siapa. Publish juga ke
+ *    channel yang didengar app → device lain menarik delta dalam ~1 detik.
+ *    Berlaku untuk SEMUA jenis perubahan data (produk, trx, stok, dst).
  */
 export async function publishSyncEvent(
   env: Env,
@@ -105,9 +115,24 @@ export async function publishSyncEvent(
   tableName: string,
   ids: string[]
 ) {
+  const payload = {
+    uid,
+    table: tableName,
+    ids,
+    deviceId: 'cloud-delta', // bukan device_id app mana pun → tak difilter
+    at: new Date().toISOString(),
+  };
   try {
-    const id = env.ROOM.idFromName(`sync:${uid}`);
-    const stub = env.ROOM.get(id);
-    await stub.broadcastSync(uid, tableName, ids);
+    await publishToRoom(env, `sync:${uid}`, {
+      event: 'sync',
+      payload,
+    });
+  } catch {}
+  try {
+    // Bridge ke channel yang benar-benar didengar app lama (no rebuild).
+    await publishToRoom(env, `backup_updated:${uid}`, {
+      event: 'backup_updated',
+      payload,
+    });
   } catch {}
 }

@@ -83,7 +83,9 @@ export async function handlePush(ctx: FnContext, params: Params): Promise<Respon
   const byTable: Record<string, string[]> = {};
 
   for (const d of deltas) {
-    const deltaId = d.id || uid();
+    // v2.2.57+134: dulu `uid()` — memanggil string sbg fungsi → throw 500
+    // untuk delta tanpa id. Pakai crypto.randomUUID().
+    const deltaId = d.id || crypto.randomUUID();
     const tableName = d.table || d.table_name;
     const recordId = d.record_id;
     const operation = d.operation || d.op || 'upsert';
