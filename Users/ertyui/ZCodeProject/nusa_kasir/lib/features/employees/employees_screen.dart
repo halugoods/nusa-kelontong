@@ -11,6 +11,7 @@ import 'package:barcode_widget/barcode_widget.dart';
 import 'package:nusa_kasir/core/providers.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/image_storage_service.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/utils/format_rupiah.dart';
 import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
@@ -1275,7 +1276,7 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
                               // di DB lama (hydrate) atau sync gambar cloud.
                               const photoBase64 = null;
                               if (employee == null) {
-                                await repo.addEmployee(
+                                final newId = await repo.addEmployee(
                                   name: name,
                                   pin: pin,
                                   role: role,
@@ -1297,6 +1298,13 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
                                         commissionC.text.replaceAll(',', '.'),
                                       ) ??
                                       10.0,
+                                );
+                                // Delta sync: announce new employee
+                                DeltaSyncService.I.pushDelta(
+                                  table: 'employees',
+                                  recordId: newId.toString(),
+                                  operation: 'INSERT',
+                                  data: {'id': newId, 'name': name, 'role': role, 'status': status},
                                 );
                               } else {
                                 await repo.updateEmployee(
@@ -1321,6 +1329,13 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
                                       double.tryParse(
                                         commissionC.text.replaceAll(',', '.'),
                                       ),
+                                );
+                                // Delta sync: announce employee update
+                                DeltaSyncService.I.pushDelta(
+                                  table: 'employees',
+                                  recordId: employee.id.toString(),
+                                  operation: 'UPDATE',
+                                  data: {'id': employee.id, 'name': name, 'role': role, 'status': status},
                                 );
                               }
                               // Upload photo to cloud in background

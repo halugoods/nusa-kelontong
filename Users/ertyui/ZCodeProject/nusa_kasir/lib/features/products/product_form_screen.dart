@@ -758,6 +758,7 @@ class _ProductFormSheetState extends ConsumerState<ProductFormSheet> {
               'stock': stock,
               'is_online': _isOnline,
               'is_service': _isService,
+              'image_path': _imagePath,
             },
           );
         } catch (_) {}

@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class CategoryRepository {
@@ -19,18 +20,36 @@ class CategoryRepository {
       CategoriesCompanion.insert(name: trimmed),
       mode: InsertMode.insertOrIgnore,
     );
+    DeltaSyncService.I.pushDelta(
+      table: 'categories',
+      recordId: trimmed,
+      operation: 'INSERT',
+      data: {'name': trimmed},
+    );
     return trimmed;
   }
 
   /// Delete a category by name.
   Future<void> delete(String name) async {
     await (db.delete(db.categories)..where((t) => t.name.equals(name))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'categories',
+      recordId: name,
+      operation: 'DELETE',
+      data: {'name': name},
+    );
   }
 
   /// Rename a category.
   Future<void> rename(String oldName, String newName) async {
     await (db.update(db.categories)..where((t) => t.name.equals(oldName)))
         .write(CategoriesCompanion(name: Value(newName.trim())));
+    DeltaSyncService.I.pushDelta(
+      table: 'categories',
+      recordId: newName.trim(),
+      operation: 'UPDATE',
+      data: {'name': newName.trim()},
+    );
   }
 
 }

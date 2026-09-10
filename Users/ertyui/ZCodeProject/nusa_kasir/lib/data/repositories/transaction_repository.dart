@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/features/pos/cart.dart';
 
@@ -160,6 +161,46 @@ class TransactionRepository {
         await (db.delete(db.customerDebts)..where((t) => t.id.equals(debtId))).go();
       }
     });
+
+    // Push deltas after successful void
+    DeltaSyncService.I.pushDelta(
+      table: 'transactions',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'status': 'Void',
+        'voidReason': reason,
+        'voidedAt': DateTime.now().toIso8601String(),
+      },
+    );
+    // Push stock restoration deltas
+    final items = _parseItemsJson(tx.items);
+    for (final item in items) {
+      final pid = item['productId'] as int?;
+      final qty = item['qty'] as int? ?? 0;
+      if (pid != null && qty > 0) {
+        final product = await (db.select(db.products)
+          ..where((p) => p.id.equals(pid))).getSingleOrNull();
+        if (product != null) {
+          DeltaSyncService.I.pushDelta(
+            table: 'products',
+            recordId: pid.toString(),
+            operation: 'UPDATE',
+            data: {'id': pid, 'stock': product.stock},
+          );
+        }
+      }
+    }
+    // Push debt deletion if applicable
+    if (tx.debtId != null) {
+      DeltaSyncService.I.pushDelta(
+        table: 'customer_debts',
+        recordId: tx.debtId.toString(),
+        operation: 'DELETE',
+        data: {'id': tx.debtId},
+      );
+    }
 
     return null; // success
   }

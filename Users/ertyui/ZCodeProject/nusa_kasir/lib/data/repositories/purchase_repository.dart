@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 /// Item baris pembelian yang belum dicatat (dari form).
@@ -89,6 +90,7 @@ class PurchaseRepository {
     String? note,
   }) async {
     var orderId = 0;
+    final pushedProductIds = <int>[];
     await db.transaction(() async {
       // ── 0. Alokasi biaya tambahan → per unit → HPP ──
       // Biaya (packing/ongkir/stiker) dibagi rata ke TOTAL QTY seluruh item,
@@ -209,6 +211,7 @@ class PurchaseRepository {
             supplierId: Value(supplierId),
           ),
         );
+        pushedProductIds.add(pid);
         // Riwayat stok masuk, biar laporan Stok lengkap.
         await db
             .into(db.stockMovements)
@@ -222,6 +225,41 @@ class PurchaseRepository {
             );
       }
     });
+
+    // Push deltas setelah transaksi commit: header + stok/harga modal produk.
+    if (orderId > 0) {
+      final order = await orderById(orderId);
+      DeltaSyncService.I.pushDelta(
+        table: 'purchase_orders',
+        recordId: orderId.toString(),
+        operation: 'INSERT',
+        data: {
+          'id': orderId,
+          'invoice': order?.invoice ?? '',
+          'supplierId': supplierId,
+          'supplierName': supplierName,
+          'total': order?.total ?? 0,
+          'note': note,
+        },
+      );
+      for (final pid in pushedProductIds) {
+        final p = await (db.select(
+          db.products,
+        )..where((t) => t.id.equals(pid))).getSingleOrNull();
+        if (p == null) continue;
+        DeltaSyncService.I.pushDelta(
+          table: 'products',
+          recordId: pid.toString(),
+          operation: 'UPDATE',
+          data: {
+            'id': pid,
+            'stock': p.stock,
+            'buyPrice': p.buyPrice,
+            'supplierId': supplierId,
+          },
+        );
+      }
+    }
     return orderId;
   }
 

@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 
 /// Role permissions (RBAC) — per-role menu access, persisted in SQLite so
 /// role permissions ride along with the cloud DB backup/restore (phone ↔
@@ -115,6 +116,13 @@ class RoleRepository {
       ),
       mode: InsertMode.insertOrReplace,
     );
+    // Delta sync: announce new role
+    DeltaSyncService.I.pushDelta(
+      table: 'roles',
+      recordId: name,
+      operation: 'INSERT',
+      data: {'name': name, 'color': color, 'access': access},
+    );
   }
 
   /// Update an existing role (name may change).
@@ -126,12 +134,25 @@ class RoleRepository {
         accessJson: Value(jsonEncode(access)),
       ),
     );
+    // Delta sync: announce role update (use new name as recordId since it's the PK)
+    DeltaSyncService.I.pushDelta(
+      table: 'roles',
+      recordId: newName,
+      operation: 'UPDATE',
+      data: {'name': newName, 'color': color, 'access': access},
+    );
   }
 
   /// Delete a custom role. Default roles cannot be deleted.
   Future<bool> deleteRole(String name) async {
     if (_defaultRoles.contains(name)) return false;
     await (db.delete(db.roles)..where((t) => t.name.equals(name))).go();
+    // Delta sync: announce role delete
+    DeltaSyncService.I.pushDelta(
+      table: 'roles',
+      recordId: name,
+      operation: 'DELETE',
+    );
     return true;
   }
 

@@ -1,10 +1,21 @@
 import 'dart:convert' as dart_convert;
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:drift/drift.dart';
 
 class SettingsRepository {
   final AppDatabase db;
   SettingsRepository(this.db);
+
+  /// Push settings delta to cloud (settings is single-row table, id=1).
+  void _pushDelta(String field, dynamic value) {
+    DeltaSyncService.I.pushDelta(
+      table: 'settings',
+      recordId: '1',
+      operation: 'UPDATE',
+      data: {'id': 1, field: value},
+    );
+  }
 
   Future<String> getStoreName() async {
     final row = await db.select(db.settings).getSingleOrNull();
@@ -39,6 +50,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(storeName: Value(name)));
+    _pushDelta('storeName', name);
   }
 
   /// v2.2.57+112: setter no. HP toko — kolom storePhone sudah ada sejak lama,
@@ -47,6 +59,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(storePhone: Value(phone)));
+    _pushDelta('storePhone', phone);
   }
 
   /// v2.2.57+112: setter alamat toko — kolom storeAddress sudah ada sejak lama,
@@ -55,6 +68,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(storeAddress: Value(address)));
+    _pushDelta('storeAddress', address);
   }
 
   Future<String> getStoreAddress() async {
@@ -66,6 +80,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(qrisString: Value(v)));
+    _pushDelta('qrisString', v);
   }
 
   Future<String?> getQris() async =>
@@ -78,6 +93,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(themeMode: Value(mode)));
+    _pushDelta('themeMode', mode);
   }
 
   Future<String?> getPrinterAddress() async =>
@@ -87,6 +103,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(posPrefix: Value(address)));
+    _pushDelta('posPrefix', address);
   }
 
   // Grid columns for POS screen (1, 2, or 3)
@@ -97,6 +114,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(posGridColumns: Value(cols)));
+    _pushDelta('posGridColumns', cols);
   }
 
   // Grid columns for Products screen (1 or 2)
@@ -133,6 +151,9 @@ class SettingsRepository {
       bankHolder: holder != null ? Value(holder) : const Value.absent(),
     );
     await (db.update(db.settings)..where((t) => t.id.equals(1))).write(c);
+    if (name != null) _pushDelta('bankName', name);
+    if (account != null) _pushDelta('bankAccount', account);
+    if (holder != null) _pushDelta('bankHolder', holder);
   }
 
   // ── Receipt footer ──
@@ -143,6 +164,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(receiptFooter: Value(text)));
+    _pushDelta('receiptFooter', text);
   }
 
   // ── QRIS Image (replaces qrisString) ──
@@ -153,6 +175,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(qrisImagePath: Value(path)));
+    _pushDelta('qrisImagePath', path);
   }
 
   // ── Receipt advanced ──
@@ -163,6 +186,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(receiptHeader: Value(text)));
+    _pushDelta('receiptHeader', text);
   }
 
   // ── Receipt sub-header (alamat toko — v2.2.30) ──
@@ -173,6 +197,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(receiptSubHeader: Value(text)));
+    _pushDelta('receiptSubHeader', text);
   }
 
   Future<String> getReceiptPaperSize() async =>
@@ -182,6 +207,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(receiptPaperSize: Value(size)));
+    _pushDelta('receiptPaperSize', size);
   }
 
   Future<Map<String, bool>> getReceiptToggles() async {
@@ -203,6 +229,7 @@ class SettingsRepository {
       receiptShowInvoice: Value(toggles['showInvoice'] ?? true),
       receiptShowDate: Value(toggles['showDate'] ?? true),
     ));
+    _pushDelta('receiptToggles', toggles);
   }
 
   // ── Store logo path ──
@@ -213,6 +240,7 @@ class SettingsRepository {
     await ensureRow();
     await (db.update(db.settings)..where((t) => t.id.equals(1)))
         .write(SettingsCompanion(storeLogoPath: Value(path)));
+    _pushDelta('storeLogoPath', path);
   }
 
   // ── WA Templates ──

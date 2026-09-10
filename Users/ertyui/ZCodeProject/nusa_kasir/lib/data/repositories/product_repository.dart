@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:nusa_kasir/core/activation/activation_key.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class ProductRepository {
@@ -226,6 +227,12 @@ class ProductRepository {
     final next = (p.stock + delta).clamp(0, 1000000000);
     await (db.update(db.products)..where((t) => t.id.equals(id)))
         .write(ProductsCompanion(stock: Value(next)));
+    DeltaSyncService.I.pushDelta(
+      table: 'products',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'stock': next},
+    );
   }
 
   /// Adjust stock of ONE variant (inside variantsJson) by [delta].

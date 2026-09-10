@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class CustomerRepository {
@@ -10,12 +11,27 @@ class CustomerRepository {
     String? phone,
     String? address,
     String? barcode,
-  }) => db.into(db.customers).insert(CustomersCompanion.insert(
-        name: name,
-        phone: Value(phone),
-        address: Value(address),
-        barcode: Value(barcode),
-      ));
+  }) async {
+    final newId = await db.into(db.customers).insert(CustomersCompanion.insert(
+      name: name,
+      phone: Value(phone),
+      address: Value(address),
+      barcode: Value(barcode),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'customers',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'barcode': barcode,
+      },
+    );
+    return newId;
+  }
 
   Future<Customer?> byId(int id) =>
     (db.select(db.customers)..where((t) => t.id.equals(id))).getSingleOrNull();
@@ -58,6 +74,18 @@ class CustomerRepository {
                 : Value.absent(),
       ),
     );
+    DeltaSyncService.I.pushDelta(
+      table: 'customers',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'barcode': clearBarcode ? null : barcode,
+      },
+    );
   }
 
   Future<void> addSpent(int id, int amount, {int pointsPerRupiah = 100, int goldThreshold = 1000, int platinumThreshold = 5000, int? transactionId}) async {
@@ -83,6 +111,17 @@ class CustomerRepository {
             : const Value.absent(),
       ));
     }
+    DeltaSyncService.I.pushDelta(
+      table: 'customers',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'totalSpent': total,
+        'points': points,
+        'level': level,
+      },
+    );
   }
 
   /// Redeem points for discount. Returns the discount amount in Rupiah (1 poin = Rp 1).
@@ -101,6 +140,15 @@ class CustomerRepository {
       transactionId: transactionId != null ? Value(transactionId) : const Value.absent(),
       note: Value('Tukar poin (1 poin = Rp 1)'),
     ));
+    DeltaSyncService.I.pushDelta(
+      table: 'customers',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'points': newPoints,
+      },
+    );
     return pointsToRedeem; // 1 poin = Rp 1
   }
 
@@ -129,6 +177,12 @@ class CustomerRepository {
 
   Future<void> deleteCustomer(int id) async {
     await (db.delete(db.customers)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'customers',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
   }
 
   /// Get auto-discount percentage based on loyalty tier.

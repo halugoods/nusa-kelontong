@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/data/repositories/product_repository.dart';
 
@@ -31,6 +32,13 @@ class StockCountRepository {
     // Update totalProducts on the session
     await (db.update(db.stockCounts)..where((t) => t.id.equals(sessionId)))
         .write(StockCountsCompanion(totalProducts: Value(products.length)));
+
+    DeltaSyncService.I.pushDelta(
+      table: 'stock_counts',
+      recordId: sessionId.toString(),
+      operation: 'INSERT',
+      data: {'id': sessionId, 'name': name, 'status': 'Draft', 'totalProducts': products.length},
+    );
 
     return sessionId;
   }
@@ -77,6 +85,18 @@ class StockCountRepository {
         physicalStock: Value(physicalStock),
         difference: Value(diff),
       ),
+    );
+    DeltaSyncService.I.pushDelta(
+      table: 'stock_count_items',
+      recordId: itemId.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': itemId,
+        'countSessionId': item.countSessionId,
+        'productId': item.productId,
+        'physicalStock': physicalStock,
+        'difference': diff,
+      },
     );
   }
 
@@ -156,6 +176,20 @@ class StockCountRepository {
         matchCount: Value(matchCount),
         diffCount: Value(diffCount),
       ),
+    );
+
+    // Push finalize session state (stok produk sudah di-push otomatis oleh
+    // ProductRepository.adjustStock yang dipanggil di dalam transaksi).
+    DeltaSyncService.I.pushDelta(
+      table: 'stock_counts',
+      recordId: sessionId.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': sessionId,
+        'status': 'Selesai',
+        'matchCount': matchCount,
+        'diffCount': diffCount,
+      },
     );
 
     return {

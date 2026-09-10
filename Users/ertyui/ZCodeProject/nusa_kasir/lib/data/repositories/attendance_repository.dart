@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class AttendanceRepository {
@@ -315,7 +316,7 @@ class AttendanceRepository {
         '${now.hour.toString().padLeft(2, '0')}:'
         '${now.minute.toString().padLeft(2, '0')}';
     if (today == null) {
-      await db
+      final newId = await db
           .into(db.attendance)
           .insert(
             AttendanceCompanion.insert(
@@ -323,9 +324,27 @@ class AttendanceRepository {
               checkIn: Value(time),
             ),
           );
+      DeltaSyncService.I.pushDelta(
+        table: 'attendance',
+        recordId: newId.toString(),
+        operation: 'INSERT',
+        data: {
+          'id': newId,
+          'employeeId': employeeId,
+          'checkIn': time,
+          'date': now.toIso8601String(),
+        },
+      );
+      return;
     } else if (today.checkIn == null) {
       await (db.update(db.attendance)..where((t) => t.id.equals(today.id)))
           .write(AttendanceCompanion(checkIn: Value(time)));
+      DeltaSyncService.I.pushDelta(
+        table: 'attendance',
+        recordId: today.id.toString(),
+        operation: 'UPDATE',
+        data: {'id': today.id, 'employeeId': employeeId, 'checkIn': time},
+      );
     }
   }
 
@@ -336,7 +355,7 @@ class AttendanceRepository {
         '${now.hour.toString().padLeft(2, '0')}:'
         '${now.minute.toString().padLeft(2, '0')}';
     if (today == null) {
-      await db
+      final newId = await db
           .into(db.attendance)
           .insert(
             AttendanceCompanion.insert(
@@ -344,16 +363,41 @@ class AttendanceRepository {
               checkOut: Value(time),
             ),
           );
+      DeltaSyncService.I.pushDelta(
+        table: 'attendance',
+        recordId: newId.toString(),
+        operation: 'INSERT',
+        data: {
+          'id': newId,
+          'employeeId': employeeId,
+          'checkOut': time,
+          'date': now.toIso8601String(),
+        },
+      );
+      return;
     } else if (today.checkOut == null) {
       await (db.update(db.attendance)..where((t) => t.id.equals(today.id)))
           .write(AttendanceCompanion(checkOut: Value(time)));
+      DeltaSyncService.I.pushDelta(
+        table: 'attendance',
+        recordId: today.id.toString(),
+        operation: 'UPDATE',
+        data: {'id': today.id, 'employeeId': employeeId, 'checkOut': time},
+      );
     }
   }
 
-  Future<void> setPettyCash(int attendanceId, int amount) =>
-      (db.update(db.attendance)..where((t) => t.id.equals(attendanceId))).write(
-        AttendanceCompanion(pettyCash: Value(amount)),
-      );
+  Future<void> setPettyCash(int attendanceId, int amount) async {
+    await (db.update(db.attendance)..where((t) => t.id.equals(attendanceId))).write(
+      AttendanceCompanion(pettyCash: Value(amount)),
+    );
+    DeltaSyncService.I.pushDelta(
+      table: 'attendance',
+      recordId: attendanceId.toString(),
+      operation: 'UPDATE',
+      data: {'id': attendanceId, 'pettyCash': amount},
+    );
+  }
 
   Future<void> setPettyCashForToday(int employeeId, int amount) async {
     final today = await getToday(employeeId);
@@ -375,6 +419,12 @@ class AttendanceRepository {
     await (db.update(db.attendance)..where((t) => t.id.equals(id))).write(
       AttendanceCompanion(finalCash: Value(amount)),
     );
+    DeltaSyncService.I.pushDelta(
+      table: 'attendance',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'employeeId': employeeId, 'finalCash': amount},
+    );
   }
 
   Future<void> checkInWithCash(int employeeId, int cash) async {
@@ -387,10 +437,17 @@ class AttendanceRepository {
     await setFinalCashForToday(employeeId, cash);
   }
 
-  Future<void> markStatus(int attendanceId, String status) =>
-      (db.update(db.attendance)..where((t) => t.id.equals(attendanceId))).write(
+  Future<void> markStatus(int attendanceId, String status) async {
+      await (db.update(db.attendance)..where((t) => t.id.equals(attendanceId))).write(
         AttendanceCompanion(status: Value(status)),
       );
+      DeltaSyncService.I.pushDelta(
+        table: 'attendance',
+        recordId: attendanceId.toString(),
+        operation: 'UPDATE',
+        data: {'id': attendanceId, 'status': status},
+      );
+    }
 
   /// Create a blank attendance record if none exists today, or mark existing as given status.
   Future<void> markTodayStatus(int employeeId, String status) async {
@@ -527,6 +584,12 @@ class AttendanceRepository {
     await (db.update(db.attendance)..where((t) => t.id.equals(today.id))).write(
       AttendanceCompanion(expectedCash: Value(amount)),
     );
+    DeltaSyncService.I.pushDelta(
+      table: 'attendance',
+      recordId: today.id.toString(),
+      operation: 'UPDATE',
+      data: {'id': today.id, 'employeeId': employeeId, 'expectedCash': amount},
+    );
   }
 
   /// Close the shift: record final cash, calculate difference from expected,
@@ -548,6 +611,18 @@ class AttendanceRepository {
         expectedCash: Value(expected),
         shiftNotes: Value(notes),
       ),
+    );
+    DeltaSyncService.I.pushDelta(
+      table: 'attendance',
+      recordId: today.id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': today.id,
+        'employeeId': employeeId,
+        'finalCash': actualCash,
+        'expectedCash': expected,
+        'shiftNotes': notes,
+      },
     );
 
     return diff;

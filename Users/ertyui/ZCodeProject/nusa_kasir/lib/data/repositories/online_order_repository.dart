@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class OnlineOrderRepository {
@@ -25,10 +26,25 @@ class OnlineOrderRepository {
       if (existing != null) {
         // Update
         await (db.update(db.onlineOrders)..where((t) => t.id.equals(existing.id))).write(companion);
+        final fields = await _companionToMap(companion);
+        DeltaSyncService.I.pushDelta(
+          table: 'online_orders',
+          recordId: existing.id.toString(),
+          operation: 'UPDATE',
+          data: {'id': existing.id, ...fields},
+        );
         return existing.id;
       }
     }
-    return db.into(db.onlineOrders).insert(companion);
+    final newId = await db.into(db.onlineOrders).insert(companion);
+    final fields = await _companionToMap(companion);
+    DeltaSyncService.I.pushDelta(
+      table: 'online_orders',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {'id': newId, ...fields},
+    );
+    return newId;
   }
 
   Future<void> updateStatus(int id, String status, {String? processedBy}) async {
@@ -37,6 +53,27 @@ class OnlineOrderRepository {
       companion = companion.copyWith(processedBy: Value(processedBy));
     }
     await (db.update(db.onlineOrders)..where((t) => t.id.equals(id))).write(companion);
+    DeltaSyncService.I.pushDelta(
+      table: 'online_orders',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'status': status,
+        if (processedBy != null) 'processedBy': processedBy,
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _companionToMap(OnlineOrdersCompanion c) async {
+    final m = <String, dynamic>{};
+    if (c.invoice.present) m['invoice'] = c.invoice.value;
+    if (c.total.present) m['total'] = c.total.value;
+    if (c.status.present) m['status'] = c.status.value;
+    if (c.customerName.present) m['customerName'] = c.customerName.value;
+    if (c.customerPhone.present) m['customerPhone'] = c.customerPhone.value;
+    if (c.items.present) m['items'] = c.items.value;
+    return m;
   }
 
   Future<int> countByStatus(String status) async {

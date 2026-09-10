@@ -7,6 +7,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:nusa_kasir/core/providers.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/utils/format_rupiah.dart';
 import 'package:nusa_kasir/core/utils/product_discount.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
@@ -956,8 +957,19 @@ Future<void> _renameCategoryDialog(
   if (result == null || result.isEmpty || result == oldName) return;
   await CategoryRepository(db).rename(oldName, result);
   // Update referensi kategori di produk.
+  final affected = await (db.select(db.products)
+        ..where((t) => t.category.equals(oldName)))
+      .get();
   await (db.update(db.products)..where((t) => t.category.equals(oldName)))
       .write(ProductsCompanion(category: Value(result)));
+  for (final p in affected) {
+    DeltaSyncService.I.pushDelta(
+      table: 'products',
+      recordId: p.id.toString(),
+      operation: 'UPDATE',
+      data: {'id': p.id, 'category': result},
+    );
+  }
   if (context.mounted) TopToast.success(context, 'Kategori diubah ke "$result"');
   onChanged?.call();
 }
@@ -990,8 +1002,19 @@ Future<void> _deleteCategoryDialog(
     ),
   );
   if (confirm != true) return;
+  final affected = await (db.select(db.products)
+        ..where((t) => t.category.equals(name)))
+      .get();
   await (db.update(db.products)..where((t) => t.category.equals(name)))
       .write(ProductsCompanion(category: Value('Lainnya')));
+  for (final p in affected) {
+    DeltaSyncService.I.pushDelta(
+      table: 'products',
+      recordId: p.id.toString(),
+      operation: 'UPDATE',
+      data: {'id': p.id, 'category': 'Lainnya'},
+    );
+  }
   await CategoryRepository(db).delete(name);
   if (context.mounted) TopToast.success(context, 'Kategori "$name" dihapus');
   onChanged?.call();

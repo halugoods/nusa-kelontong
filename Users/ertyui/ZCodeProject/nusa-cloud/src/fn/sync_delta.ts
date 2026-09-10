@@ -22,7 +22,7 @@ type H = (ctx: FnContext, params: Params) => Promise<Response>;
 
 // ─── Auth wrapper (sama pola adminWrap di license_manager) ────────────
 
-function authWrap(h: H): H {
+function adminWrap(h: H): H {
   return async (ctx: FnContext, params: Params): Promise<Response> => {
     if (!requireAdmin(ctx)) return errorJson('Unauthorized', 401);
     try {
@@ -30,6 +30,25 @@ function authWrap(h: H): H {
     } catch (e: any) {
       return errorJson(e?.message ?? String(e), 500);
     }
+  };
+}
+
+// Device auth: allow if admin/JWT OR if google_user_id + device_id provided.
+// Sync endpoints need to work without admin credentials — device sends its
+// google_user_id (from Google Sign-In) + device_id to authenticate.
+function deviceWrap(h: H): H {
+  return async (ctx: FnContext, params: Params): Promise<Response> => {
+    if (requireAdmin(ctx)) return h(ctx, params);
+    const uid = params.google_user_id || params.uid;
+    const deviceId = params.device_id;
+    if (uid && deviceId) {
+      try {
+        return await h(ctx, params);
+      } catch (e: any) {
+        return errorJson(e?.message ?? String(e), 500);
+      }
+    }
+    return errorJson('Unauthorized — admin key or device auth required', 401);
   };
 }
 
@@ -48,7 +67,7 @@ function getUid(ctx: FnContext, params: Params): string | null {
 
 export async function handlePush(ctx: FnContext, params: Params): Promise<Response> {
   const env = ctx.env;
-  const uid = getUid(ctx, params);
+  const uid = params.uid || params.google_user_id || getUid(ctx, params);
   if (!uid) return errorJson('Unauthorized — no uid', 401);
 
   const deltas = (params.deltas as any[]) ?? [];
@@ -105,7 +124,7 @@ export async function handlePush(ctx: FnContext, params: Params): Promise<Respon
 
 export async function handlePull(ctx: FnContext, params: Params): Promise<Response> {
   const env = ctx.env;
-  const uid = getUid(ctx, params);
+  const uid = params.uid || params.google_user_id || getUid(ctx, params);
   if (!uid) return errorJson('Unauthorized — no uid', 401);
 
   const myDeviceId = (params.device_id as string) ?? 'unknown';
@@ -211,6 +230,97 @@ export async function handleStatus(ctx: FnContext, params: Params): Promise<Resp
   });
 }
 
+// ─── GET /api/sync-delta/users ─────────────────────────────────────────
+// Diagnostic: list semua user aktif + metadata untuk tab Diagnostic dashboard.
+
+export async function handleUsers(ctx: FnContext, _params: Params): Promise<Response> {
+  if (!requireAdmin(ctx)) return errorJson('Unauthorized', 401);
+  const env = ctx.env;
+
+  // Ambil semua lisensi + aktivasi
+  const licRes = await env.DB.prepare(
+    'SELECT * FROM licenses ORDER BY created_at DESC'
+  ).all<Row>();
+  const licenses = licRes.results ?? [];
+
+  // Ambil activations untuk hitung device count
+  const actRes = await env.DB.prepare(
+    'SELECT license_id, device_id, created_at FROM activations ORDER BY created_at DESC'
+  ).all<Row>();
+  const allActivations = actRes.results ?? [];
+
+  // Map activations per license
+  const actByLicense: Record<string, Row[]> = {};
+  for (const a of allActivations) {
+    const lid = String(a.license_id);
+    if (!actByLicense[lid]) actByLicense[lid] = [];
+    actByLicense[lid].push(a);
+  }
+
+  // Ambil info backup dari setiap user
+  const users = await Promise.all(licenses.map(async (lic) => {
+    const uid = lic.google_user_id ?? '';
+    const product = lic.product ?? 'nusa-kasir';
+    const backupPath = `${uid}/${product}/backup.sqlite.enc`;
+    let backupExists = false;
+    let backupSize = 0;
+    let lastBackupAt = '';
+    try {
+      const obj = await env.BUCKET_BACKUPS.head(backupPath);
+      if (obj) {
+        backupExists = true;
+        backupSize = obj.size ?? 0;
+        lastBackupAt = obj.uploaded?.toISOString?.() ?? '';
+      }
+    } catch {}
+
+    const acts = actByLicense[String(lic.id)] ?? [];
+    const uniqueDevices = new Set(acts.map(a => a.device_id).filter(Boolean));
+
+    // Hitung produk + transaksi dari store_settings (best-effort)
+    let productCount = 0;
+    let transactionCount = 0;
+    try {
+      const ss = await env.DB.prepare(
+        'SELECT value FROM store_settings WHERE uid = ? AND key = ?'
+      ).bind(uid, 'product_count').first<Row>();
+      if (ss?.value) productCount = parseInt(String(ss.value), 10) || 0;
+    } catch {}
+    try {
+      const ss = await env.DB.prepare(
+        'SELECT value FROM store_settings WHERE uid = ? AND key = ?'
+      ).bind(uid, 'transaction_count').first<Row>();
+      if (ss?.value) transactionCount = parseInt(String(ss.value), 10) || 0;
+    } catch {}
+
+    // Detect issues
+    const issues: string[] = [];
+    if (!backupExists) issues.push('no_backup');
+    if (backupExists && backupSize < 1024) issues.push('backup_tiny');
+    if (uniqueDevices.size === 0) issues.push('no_device');
+    if (lic.status === 'Expired') issues.push('license_expired');
+    if (lic.status === 'Cancelled') issues.push('license_cancelled');
+    if (!uid) issues.push('no_google_uid');
+
+    return {
+      uid,
+      email: lic.owner_email ?? '',
+      storeName: lic.store_name ?? lic.owner_email ?? '',
+      licenseActive: lic.status === 'Active',
+      licenseExpiresAt: lic.expires_at ?? '',
+      lastBackupAt,
+      backupSizeMB: Math.round(backupSize / 1024 / 1024 * 100) / 100,
+      deviceCount: uniqueDevices.size,
+      lastSyncAt: acts[0]?.created_at ?? '',
+      productCount,
+      transactionCount,
+      issues,
+    };
+  }));
+
+  return json({ users, total: users.length });
+}
+
 // ─── POST /api/sync-delta/register-device ─────────────────────────────
 
 export async function handleRegisterDevice(ctx: FnContext, params: Params): Promise<Response> {
@@ -245,9 +355,55 @@ export async function handleRegisterDevice(ctx: FnContext, params: Params): Prom
 // ─── Registrasi route ────────────────────────────────────────────────
 
 Router.registerAll('sync-delta', {
-  push: authWrap(handlePush),
-  pull: authWrap(handlePull),
-  ack: authWrap(handleAck),
-  status: authWrap(handleStatus),
-  'register-device': authWrap(handleRegisterDevice),
+  users: adminWrap(handleUsers),
+  push: deviceWrap(handlePush),
+  pull: deviceWrap(handlePull),
+  ack: deviceWrap(handleAck),
+  status: deviceWrap(handleStatus),
+  'register-device': deviceWrap(handleRegisterDevice),
+  'portal-repair-backup': adminWrap(async (ctx, params) => {
+    // Trigger backup by sending ring event to user's room
+    const uid = String(params.uid ?? '');
+    if (!uid) return errorJson('uid required', 400);
+    try {
+      const { publishSyncEvent } = await import('../room');
+      await publishSyncEvent(ctx.env, uid, 'backup_request', []);
+      return json({ ok: true, message: 'Backup request sent to user devices' });
+    } catch (e: any) {
+      return errorJson(e?.message ?? 'Failed', 500);
+    }
+  }),
+  'portal-repair-sync': adminWrap(async (ctx, params) => {
+    const uid = String(params.uid ?? '');
+    if (!uid) return errorJson('uid required', 400);
+    try {
+      const { publishSyncEvent } = await import('../room');
+      await publishSyncEvent(ctx.env, uid, 'sync_request', []);
+      return json({ ok: true, message: 'Sync request sent to user devices' });
+    } catch (e: any) {
+      return errorJson(e?.message ?? 'Failed', 500);
+    }
+  }),
+  'portal-repair-data': adminWrap(async (ctx, params) => {
+    const uid = String(params.uid ?? '');
+    if (!uid) return errorJson('uid required', 400);
+    try {
+      const { publishSyncEvent } = await import('../room');
+      await publishSyncEvent(ctx.env, uid, 'repair_data', []);
+      return json({ ok: true, message: 'Repair data request sent to user devices' });
+    } catch (e: any) {
+      return errorJson(e?.message ?? 'Failed', 500);
+    }
+  }),
+  'portal-repair-images': adminWrap(async (ctx, params) => {
+    const uid = String(params.uid ?? '');
+    if (!uid) return errorJson('uid required', 400);
+    try {
+      const { publishSyncEvent } = await import('../room');
+      await publishSyncEvent(ctx.env, uid, 'resync_images', []);
+      return json({ ok: true, message: 'Resync images request sent to user devices' });
+    } catch (e: any) {
+      return errorJson(e?.message ?? 'Failed', 500);
+    }
+  }),
 });

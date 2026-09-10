@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class FinanceRepository {
@@ -11,13 +12,26 @@ class FinanceRepository {
     required String description,
     required int amount,
     int? branchId,
-  }) {
-    return db.into(db.expenses).insert(ExpensesCompanion.insert(
-          category: category,
-          description: description,
-          amount: amount,
-          branchId: Value(branchId),
-        ));
+  }) async {
+    final newId = await db.into(db.expenses).insert(ExpensesCompanion.insert(
+      category: category,
+      description: description,
+      amount: amount,
+      branchId: Value(branchId),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'expenses',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'category': category,
+        'description': description,
+        'amount': amount,
+        'branchId': branchId,
+      },
+    );
+    return newId;
   }
 
   Future<List<Expense>> getExpenses({int? branchId}) {
@@ -46,11 +60,26 @@ class FinanceRepository {
   Future<List<ExpenseCategory>> getCategories() =>
       (db.select(db.expenseCategories)..orderBy([(t) => OrderingTerm(expression: t.name)])).get();
 
-  Future<int> addCategory(String name) =>
-      db.into(db.expenseCategories).insert(ExpenseCategoriesCompanion.insert(name: name));
+  Future<int> addCategory(String name) async {
+    final newId = await db.into(db.expenseCategories).insert(ExpenseCategoriesCompanion.insert(name: name));
+    DeltaSyncService.I.pushDelta(
+      table: 'expense_categories',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {'id': newId, 'name': name},
+    );
+    return newId;
+  }
 
-  Future<void> deleteCategory(int id) =>
-      (db.delete(db.expenseCategories)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteCategory(int id) async {
+    await (db.delete(db.expenseCategories)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'expense_categories',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
   // ---- Recurring Expenses ----
   Future<List<RecurringExpense>> getRecurring() =>
@@ -62,26 +91,61 @@ class FinanceRepository {
     required String description,
     required String frequency,
     required DateTime nextDate,
-  }) {
-    return db.into(db.recurringExpenses).insert(RecurringExpensesCompanion.insert(
-          category: category,
-          amount: amount,
-          description: description,
-          frequency: frequency,
-          nextDate: nextDate,
-        ));
+  }) async {
+    final newId = await db.into(db.recurringExpenses).insert(RecurringExpensesCompanion.insert(
+      category: category,
+      amount: amount,
+      description: description,
+      frequency: frequency,
+      nextDate: nextDate,
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'recurring_expenses',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'category': category,
+        'amount': amount,
+        'description': description,
+        'frequency': frequency,
+        'nextDate': nextDate.toIso8601String(),
+      },
+    );
+    return newId;
   }
 
-  Future<void> updateRecurringNextDate(int id, DateTime nextDate) =>
-      (db.update(db.recurringExpenses)..where((t) => t.id.equals(id)))
-          .write(RecurringExpensesCompanion(nextDate: Value(nextDate)));
+  Future<void> updateRecurringNextDate(int id, DateTime nextDate) async {
+    await (db.update(db.recurringExpenses)..where((t) => t.id.equals(id)))
+        .write(RecurringExpensesCompanion(nextDate: Value(nextDate)));
+    DeltaSyncService.I.pushDelta(
+      table: 'recurring_expenses',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'nextDate': nextDate.toIso8601String()},
+    );
+  }
 
-  Future<void> toggleRecurring(int id, bool active) =>
-      (db.update(db.recurringExpenses)..where((t) => t.id.equals(id)))
-          .write(RecurringExpensesCompanion(active: Value(active)));
+  Future<void> toggleRecurring(int id, bool active) async {
+    await (db.update(db.recurringExpenses)..where((t) => t.id.equals(id)))
+        .write(RecurringExpensesCompanion(active: Value(active)));
+    DeltaSyncService.I.pushDelta(
+      table: 'recurring_expenses',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'active': active},
+    );
+  }
 
-  Future<void> deleteRecurring(int id) =>
-      (db.delete(db.recurringExpenses)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteRecurring(int id) async {
+    await (db.delete(db.recurringExpenses)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'recurring_expenses',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
   /// Auto-generate expenses for recurring entries whose nextDate has passed.
   /// Returns the number of expenses generated.
@@ -122,16 +186,32 @@ class FinanceRepository {
     int deduction = 0,
     String? notes,
     String status = 'Pending',
-  }) {
-    return db.into(db.payroll).insert(PayrollCompanion.insert(
-          employeeId: employeeId,
-          period: period,
-          salary: salary,
-          bonus: Value(bonus),
-          deduction: Value(deduction),
-          notes: Value(notes),
-          status: Value(status),
-        ));
+  }) async {
+    final newId = await db.into(db.payroll).insert(PayrollCompanion.insert(
+      employeeId: employeeId,
+      period: period,
+      salary: salary,
+      bonus: Value(bonus),
+      deduction: Value(deduction),
+      notes: Value(notes),
+      status: Value(status),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'payroll',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'employeeId': employeeId,
+        'period': period,
+        'salary': salary,
+        'bonus': bonus,
+        'deduction': deduction,
+        'notes': notes,
+        'status': status,
+      },
+    );
+    return newId;
   }
 
   Future<List<PayrollData>> getPayroll() =>
@@ -147,13 +227,26 @@ class FinanceRepository {
     required int qty,
     String? reason,
     String type = 'Expired',
-  }) {
-    return db.into(db.waste).insert(WasteCompanion.insert(
-          productId: productId,
-          qty: qty,
-          reason: Value(reason),
-          type: Value(type),
-        ));
+  }) async {
+    final newId = await db.into(db.waste).insert(WasteCompanion.insert(
+      productId: productId,
+      qty: qty,
+      reason: Value(reason),
+      type: Value(type),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'waste',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'productId': productId,
+        'qty': qty,
+        'reason': reason,
+        'type': type,
+      },
+    );
+    return newId;
   }
 
   Future<List<WasteData>> getWaste() =>
@@ -171,15 +264,30 @@ class FinanceRepository {
     required int amount,
     String? method,
     int? branchId,
-  }) {
-    return db.into(db.liquidity).insert(LiquidityCompanion.insert(
-          type: type,
-          category: category,
-          description: description,
-          amount: amount,
-          method: Value(method),
-          branchId: Value(branchId),
-        ));
+  }) async {
+    final newId = await db.into(db.liquidity).insert(LiquidityCompanion.insert(
+      type: type,
+      category: category,
+      description: description,
+      amount: amount,
+      method: Value(method),
+      branchId: Value(branchId),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'liquidity',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'type': type,
+        'category': category,
+        'description': description,
+        'amount': amount,
+        'method': method,
+        'branchId': branchId,
+      },
+    );
+    return newId;
   }
 
   Future<List<LiquidityData>> getLiquidity({int? branchId}) {
@@ -247,22 +355,57 @@ class FinanceRepository {
   }
 
   // ---- Delete ----
-  Future<void> deleteExpense(int id) =>
-      (db.delete(db.expenses)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteExpense(int id) async {
+    await (db.delete(db.expenses)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'expenses',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
-  Future<void> deletePayroll(int id) =>
-      (db.delete(db.payroll)..where((t) => t.id.equals(id))).go();
+  Future<void> deletePayroll(int id) async {
+    await (db.delete(db.payroll)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'payroll',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
-  Future<void> deleteWaste(int id) =>
-      (db.delete(db.waste)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteWaste(int id) async {
+    await (db.delete(db.waste)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'waste',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
-  Future<void> deleteLiquidity(int id) =>
-      (db.delete(db.liquidity)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteLiquidity(int id) async {
+    await (db.delete(db.liquidity)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'liquidity',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 
   // ---- Payroll status ----
-  Future<void> updatePayrollStatus(int id, String status) =>
-      (db.update(db.payroll)..where((t) => t.id.equals(id)))
-          .write(PayrollCompanion(status: Value(status)));
+  Future<void> updatePayrollStatus(int id, String status) async {
+    await (db.update(db.payroll)..where((t) => t.id.equals(id)))
+        .write(PayrollCompanion(status: Value(status)));
+    DeltaSyncService.I.pushDelta(
+      table: 'payroll',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'status': status},
+    );
+  }
 
   /// Safe month increment — avoids DateTime(date.year, 13, …) crash.
   static DateTime _addMonthSafe(DateTime date) {

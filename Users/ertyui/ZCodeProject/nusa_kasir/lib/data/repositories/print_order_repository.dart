@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class PrintOrderRepository {
@@ -18,21 +19,43 @@ class PrintOrderRepository {
     int total = 0,
     String? notes,
     String? customFieldsJson,
-  }) =>
-      db.into(db.printOrders).insert(PrintOrdersCompanion.insert(
-            customerName: customerName,
-            customerPhone: Value(customerPhone),
-            serviceType: serviceType,
-            pages: Value(pages),
-            copies: Value(copies),
-            paperSize: Value(paperSize),
-            widthCm: Value(widthCm),
-            lengthCm: Value(lengthCm),
-            estimateReady: Value(estimateReady),
-            total: Value(total),
-            notes: Value(notes),
-            customFieldsJson: Value(customFieldsJson),
-          ));
+  }) async {
+    final newId = await db.into(db.printOrders).insert(PrintOrdersCompanion.insert(
+      customerName: customerName,
+      customerPhone: Value(customerPhone),
+      serviceType: serviceType,
+      pages: Value(pages),
+      copies: Value(copies),
+      paperSize: Value(paperSize),
+      widthCm: Value(widthCm),
+      lengthCm: Value(lengthCm),
+      estimateReady: Value(estimateReady),
+      total: Value(total),
+      notes: Value(notes),
+      customFieldsJson: Value(customFieldsJson),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'print_orders',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'customerName': customerName,
+        'customerPhone': customerPhone,
+        'serviceType': serviceType,
+        'pages': pages,
+        'copies': copies,
+        'paperSize': paperSize,
+        'widthCm': widthCm,
+        'lengthCm': lengthCm,
+        'estimateReady': estimateReady,
+        'total': total,
+        'notes': notes,
+        'customFieldsJson': customFieldsJson,
+      },
+    );
+    return newId;
+  }
 
   Future<List<PrintOrder>> getAll() =>
       (db.select(db.printOrders)
@@ -48,9 +71,16 @@ class PrintOrderRepository {
   Future<PrintOrder?> byId(int id) =>
       (db.select(db.printOrders)..where((t) => t.id.equals(id))).getSingleOrNull();
 
-  Future<void> updateStatus(int id, String status) =>
-      (db.update(db.printOrders)..where((t) => t.id.equals(id)))
-          .write(PrintOrdersCompanion(status: Value(status)));
+  Future<void> updateStatus(int id, String status) async {
+    await (db.update(db.printOrders)..where((t) => t.id.equals(id)))
+        .write(PrintOrdersCompanion(status: Value(status)));
+    DeltaSyncService.I.pushDelta(
+      table: 'print_orders',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {'id': id, 'status': status},
+    );
+  }
 
   /// Update penuh (form edit) — semua field kecuali id/createdAt.
   Future<void> update(
@@ -68,24 +98,46 @@ class PrintOrderRepository {
     String? notes,
     String? status,
     String? customFieldsJson,
-  }) =>
-      (db.update(db.printOrders)..where((t) => t.id.equals(id)))
-          .write(PrintOrdersCompanion(
-            customerName: Value(customerName),
-            customerPhone: Value(customerPhone),
-            serviceType: Value(serviceType),
-            pages: Value(pages),
-            copies: Value(copies),
-            paperSize: Value(paperSize),
-            widthCm: Value(widthCm),
-            lengthCm: Value(lengthCm),
-            estimateReady: Value(estimateReady),
-            total: Value(total),
-            notes: Value(notes),
-            status: status != null ? Value(status) : const Value.absent(),
-            customFieldsJson:
-                customFieldsJson != null ? Value(customFieldsJson) : const Value.absent(),
-          ));
+  }) async {
+    await (db.update(db.printOrders)..where((t) => t.id.equals(id)))
+        .write(PrintOrdersCompanion(
+          customerName: Value(customerName),
+          customerPhone: Value(customerPhone),
+          serviceType: Value(serviceType),
+          pages: Value(pages),
+          copies: Value(copies),
+          paperSize: Value(paperSize),
+          widthCm: Value(widthCm),
+          lengthCm: Value(lengthCm),
+          estimateReady: Value(estimateReady),
+          total: Value(total),
+          notes: Value(notes),
+          status: status != null ? Value(status) : const Value.absent(),
+          customFieldsJson:
+              customFieldsJson != null ? Value(customFieldsJson) : const Value.absent(),
+        ));
+    DeltaSyncService.I.pushDelta(
+      table: 'print_orders',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'customerName': customerName,
+        'customerPhone': customerPhone,
+        'serviceType': serviceType,
+        'pages': pages,
+        'copies': copies,
+        'paperSize': paperSize,
+        'widthCm': widthCm,
+        'lengthCm': lengthCm,
+        'estimateReady': estimateReady,
+        'total': total,
+        'notes': notes,
+        'status': status,
+        'customFieldsJson': customFieldsJson,
+      },
+    );
+  }
 
   Future<int> countByStatus(String status) async {
     final rows = await (db.select(db.printOrders)
@@ -112,6 +164,13 @@ class PrintOrderRepository {
     return rows.length;
   }
 
-  Future<void> delete(int id) =>
-      (db.delete(db.printOrders)..where((t) => t.id.equals(id))).go();
+  Future<void> delete(int id) async {
+    await (db.delete(db.printOrders)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'print_orders',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 }

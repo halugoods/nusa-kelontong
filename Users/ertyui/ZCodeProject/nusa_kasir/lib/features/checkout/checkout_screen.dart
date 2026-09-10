@@ -1296,13 +1296,21 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         // v2.2.57+131: announce transaction via delta sync so other devices
         // can apply the row-level change without a full backup pull.
         try {
+          // Invoice dibuat di dalam repository — ambil ulang row-nya supaya
+          // delta membawa invoice yang PERSIS sama dengan DB lokal.
+          final savedTx = await (db.select(db.transactions)
+                ..where((t) => t.id.equals(savedTxId)))
+              .getSingleOrNull();
           DeltaSyncService.I.pushDelta(
             table: 'transactions',
             recordId: savedTxId.toString(),
             operation: 'INSERT',
             data: {
               'id': savedTxId,
+              'invoice': savedTx?.invoice ?? '',
               'total': _total,
+              'items': jsonEncode(cart.map((e) => e.toJson()).toList()),
+              'payment_method': _paymentMethod ?? 'tunai',
               'date': DateTime.now().millisecondsSinceEpoch,
             },
           );

@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 
 class SupplierRepository {
@@ -11,14 +12,28 @@ class SupplierRepository {
     String? address,
     String? contactPerson,
     String? note,
-  }) {
-    return db.into(db.suppliers).insert(SuppliersCompanion.insert(
-          name: name,
-          phone: Value(phone),
-          address: Value(address),
-          contactPerson: Value(contactPerson),
-          note: Value(note),
-        ));
+  }) async {
+    final newId = await db.into(db.suppliers).insert(SuppliersCompanion.insert(
+      name: name,
+      phone: Value(phone),
+      address: Value(address),
+      contactPerson: Value(contactPerson),
+      note: Value(note),
+    ));
+    DeltaSyncService.I.pushDelta(
+      table: 'suppliers',
+      recordId: newId.toString(),
+      operation: 'INSERT',
+      data: {
+        'id': newId,
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'contactPerson': contactPerson,
+        'note': note,
+      },
+    );
+    return newId;
   }
 
   Future<List<Supplier>> getSuppliers() =>
@@ -44,8 +59,28 @@ class SupplierRepository {
     if (note != null) companion = companion.copyWith(note: Value(note));
     await (db.update(db.suppliers)..where((t) => t.id.equals(id)))
         .write(companion);
+    DeltaSyncService.I.pushDelta(
+      table: 'suppliers',
+      recordId: id.toString(),
+      operation: 'UPDATE',
+      data: {
+        'id': id,
+        'name': name,
+        'phone': phone,
+        'address': address,
+        'contactPerson': contactPerson,
+        'note': note,
+      },
+    );
   }
 
-  Future<void> deleteSupplier(int id) =>
-      (db.delete(db.suppliers)..where((t) => t.id.equals(id))).go();
+  Future<void> deleteSupplier(int id) async {
+    await (db.delete(db.suppliers)..where((t) => t.id.equals(id))).go();
+    DeltaSyncService.I.pushDelta(
+      table: 'suppliers',
+      recordId: id.toString(),
+      operation: 'DELETE',
+      data: {'id': id},
+    );
+  }
 }

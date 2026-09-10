@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/data/repositories/category_repository.dart';
 import 'package:nusa_kasir/data/repositories/product_repository.dart';
@@ -109,8 +110,19 @@ class _KategoriListScreenState extends ConsumerState<KategoriListScreen> {
       final db = ref.read(databaseProvider);
       await CategoryRepository(db).rename(oldName, result);
       // Update product category references
+      final affected = await (db.select(db.products)
+            ..where((t) => t.category.equals(oldName)))
+          .get();
       await (db.update(db.products)..where((t) => t.category.equals(oldName)))
           .write(ProductsCompanion(category: Value(result)));
+      for (final p in affected) {
+        DeltaSyncService.I.pushDelta(
+          table: 'products',
+          recordId: p.id.toString(),
+          operation: 'UPDATE',
+          data: {'id': p.id, 'category': result},
+        );
+      }
       TopToast.success(context, 'Kategori diubah ke "$result"');
       _load();
     }
@@ -136,8 +148,19 @@ class _KategoriListScreenState extends ConsumerState<KategoriListScreen> {
     if (confirm == true) {
       final db = ref.read(databaseProvider);
       // Move products to "Lainnya"
+      final affected = await (db.select(db.products)
+            ..where((t) => t.category.equals(name)))
+          .get();
       await (db.update(db.products)..where((t) => t.category.equals(name)))
           .write(ProductsCompanion(category: Value('Lainnya')));
+      for (final p in affected) {
+        DeltaSyncService.I.pushDelta(
+          table: 'products',
+          recordId: p.id.toString(),
+          operation: 'UPDATE',
+          data: {'id': p.id, 'category': 'Lainnya'},
+        );
+      }
       await CategoryRepository(db).delete(name);
       TopToast.success(context, 'Kategori "$name" dihapus');
       _load();
