@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/receipt/receipt_config.dart';
 import 'package:nusa_kasir/core/receipt/receipt_data.dart';
@@ -94,6 +95,14 @@ class _TransactionsScreenState extends ConsumerState<TransactionsScreen> {
   void initState() {
     super.initState();
     _loadEmployees();
+    // v2.2.57+136: refresh saat delta sync mengubah DB — dulu layar ini
+    // load-once via FutureBuilder, transaksi dari device lain tak pernah
+    // muncul sampai user buka-tutup layar manual.
+    try {
+      DeltaSyncService.I.stream.listen((_) {
+        if (mounted) setState(() {});
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadEmployees() async {

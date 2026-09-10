@@ -124,20 +124,21 @@ class DeltaSyncService {
     if (_db == null || _uid == null || _deviceId == null) return;
 
     try {
-      // 1. Kandidat = baris terakhir per (table_name, record_pk).
+      // 1. Kandidat = baris terakhir per (table_name, record_pk), FIFO.
+      //    v2.2.57+136: ORDER BY max_id dulu lalu take — dulu sort sesudah
+      //    LIMIT sehingga grup yang kepotong tak selalu yang terlama (delta
+      //    lama bisa menunggu berkali-kali flush).
       final rows = await _db!.customSelect('''
         SELECT o.table_name, o.record_pk, o.operation, MAX(o.id) AS max_id
         FROM sync_outbox o
         GROUP BY o.table_name, o.record_pk
+        ORDER BY max_id ASC
         LIMIT ?
-      ''', variables: [Variable.withInt(_maxBatchSize * 2)]).get();
+      ''', variables: [Variable.withInt(_maxBatchSize)]).get();
 
       if (rows.isEmpty) return;
 
-      // Batasi ke ukuran batch menurut id terkecil supaya FIFO.
-      final sorted = rows.toList()
-        ..sort((a, b) => (a.data['max_id'] as int).compareTo(b.data['max_id'] as int));
-      final batch = sorted.take(_maxBatchSize).toList();
+      final batch = rows.toList();
       final maxIdInBatch =
           batch.map((r) => r.data['max_id'] as int).reduce((a, b) => a > b ? a : b);
 
@@ -162,7 +163,6 @@ class DeltaSyncService {
               'record_id': pk,
               'operation': 'DELETE',
               'data': null,
-              'created_at': DateTime.now().toUtc().toIso8601String(),
               'device_id': _deviceId,
             });
             continue;
@@ -173,11 +173,13 @@ class DeltaSyncService {
           'id': _uuid(),
           'table': table,
           'record_id': pk,
-          'operation': op == 'INSERT' ? 'INSERT' : op,
+          'operation': op,
           'data': data != null ? jsonEncode(data) : null,
-          'created_at': DateTime.now().toUtc().toIso8601String(),
           'device_id': _deviceId,
         });
+        // v2.2.57+136: created_at device TIDAK dikirim. Dulu timestamp device
+        // (jam HP) bisa di belakang timestamp server → worker pull dengan
+        // since=server_time melewatkan delta barunya (SKIP permanen).
       }
 
       if (deltas.isEmpty) {
@@ -238,11 +240,17 @@ class DeltaSyncService {
       // gambar tersimpan di R2; apply-side hydrate dari R2).
       data.remove('image_base64');
       data.remove('photo_base64');
-      // DateTime drift dibaca sebagai int (ms epoch) — ubah ke string ISO
-      // supaya apply-side DateTime.tryParse bisa mem-parse.
+      // v2.2.57+136 FIX KRITIS: kolom datetime drift disimpan SQLite sebagai
+      // int DETIK (millisecondsSinceEpoch ~/ 1000 — lihat drift mapping.dart),
+      // bukan ms! Dulu dikonversi with fromMillisecondsSinceEpoch → ISO
+      // 20.000 tahun di masa depan, dan apply-side (_mapToTransaction) yang
+      // expect int malah dapat string → TypeError → transaksi GAGAL apply
+      // diam-diam. Sekarang: detik → ISO benar; apply-side menerima bentuk
+      // int-detik ATAU ISO.
       for (final e in data.entries.toList()) {
-        if (e.value is int && _looksLikeDatetimeColumn(table, e.key)) {
-          data[e.key] = DateTime.fromMillisecondsSinceEpoch(e.value as int)
+        final v = e.value;
+        if (v is int && _looksLikeDatetimeColumn(table, e.key)) {
+          data[e.key] = DateTime.fromMillisecondsSinceEpoch(v * 1000)
               .toUtc()
               .toIso8601String();
         }
@@ -267,54 +275,103 @@ class DeltaSyncService {
     if (_db == null || _uid == null) return;
 
     try {
-      final lastPull = await SecureStore.getLastDeltaPull();
-      final result = await CloudGateway.shared.invoke('sync-delta', body: {
-        'action': 'pull',
-        'since': lastPull?.toIso8601String(),
-        'uid': _uid!,
-        'google_user_id': _uid!,
-        // v2.2.57+134: WAJIB — sebelumnya tidak dikirim → worker deviceWrap
-        // menolak 401 (device_id tidak ada) DAN filter device_id != 'unknown'
-        // salah sehingga device bisa menarik delta-nya sendiri.
-        if (_deviceId != null) 'device_id': _deviceId!,
-      });
+      // v2.2.57+136: since pakai server_time dari pull sebelumnya — JAM
+      // SERVER, bukan jam device (device clock bisa meleset → delta di-skip).
+      // Pull lama tanpa server_time tersimpan → fallback DateTime sekarang
+      // hanya untuk device yang belum pernah dapat server_time.
+      var since = await SecureStore.getLastDeltaPull();
+      since ??= DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+      final sinceBase = since;
 
-      if (!result.ok) return;
+      String? serverTime;
+      var guard = 0;
+      // v2.2.57+136: has_more diikuti sampai habis — dulu cuma batch 100
+      // pertama per pull → saat sync pertama / offline lama, sisa delta
+      // nunggu tick 30 detik berikutnya (n batch = n×30 detik).
+      do {
+        final result = await CloudGateway.shared.invoke('sync-delta', body: {
+          'action': 'pull',
+          'since': sinceBase.toIso8601String(),
+          'limit': 200,
+          'uid': _uid!,
+          'google_user_id': _uid!,
+          // v2.2.57+134: WAJIB — sebelumnya tidak dikirim → worker deviceWrap
+          // menolak 401 (device_id tidak ada) DAN filter device_id != 'unknown'
+          // salah sehingga device bisa menarik delta-nya sendiri.
+          if (_deviceId != null) 'device_id': _deviceId!,
+        });
 
-      final data = result.data;
-      if (data is! Map) return;
+        if (!result.ok) return;
 
-      final deltas = (data['deltas'] as List?) ?? [];
-      final deltaIds = <String>[];
+        final data = result.data;
+        if (data is! Map) return;
 
-      if (deltas.isNotEmpty) {
-        // v2.2.57+134: mute trigger selama apply — tulisan hasil apply tidak
-        // boleh masuk outbox lagi (ping-pong antar device tanpa ujung).
+        final deltas = (data['deltas'] as List?) ?? [];
+        serverTime = data['server_time'] as String? ?? serverTime;
+
+        if (deltas.isEmpty) break;
+
+        // v2.2.57+134/136: mute trigger selama apply — tulisan hasil apply
+        // tidak boleh masuk outbox lagi (ping-pong antar device tanpa ujung).
         await setSyncMuted(_db!, true);
+        final appliedIds = <String>[];
+        var changed = false;
         try {
           for (final d in deltas) {
             if (d is! Map) continue;
             final delta = Map<String, dynamic>.from(d);
-            await _applyDelta(delta);
-            deltaIds.add(delta['id'] as String? ?? '');
+            // v2.2.57+136: apply SEKARANG mencekoki data (parse/validasi) dan
+            // HANYA delta yang sukses di-ack. Dulu semua id di-ack walau apply
+            // crash → delta gagal hilang PERMANEN dari server.
+            try {
+              await _applyDelta(delta);
+              final id = delta['id'];
+              if (id is String && id.isNotEmpty) appliedIds.add(id);
+              changed = true;
+            } catch (e) {
+              debugPrint(
+                  '[DeltaSync] apply failed (NOT acked) ${delta['table']}/${delta['record_id']}: $e');
+            }
           }
         } finally {
           await setSyncMuted(_db!, false);
         }
-      }
 
-      // Ack received deltas
-      if (deltaIds.isNotEmpty) {
-        await CloudGateway.shared.invoke('sync-delta', body: {
-          'action': 'ack',
-          'delta_ids': deltaIds,
-          'uid': _uid!,
-          'google_user_id': _uid!,
-          if (_deviceId != null) 'device_id': _deviceId!,
-        });
-      }
+        // Ack received deltas
+        if (appliedIds.isNotEmpty) {
+          try {
+            await CloudGateway.shared.invoke('sync-delta', body: {
+              'action': 'ack',
+              'delta_ids': appliedIds,
+              'uid': _uid!,
+              'google_user_id': _uid!,
+              if (_deviceId != null) 'device_id': _deviceId!,
+            });
+          } catch (_) {}
+        }
 
-      await SecureStore.setLastDeltaPull(DateTime.now().toUtc());
+        // v2.2.57+136: beri tahu UI bahwa DB berubah (refresh layar yang
+        // load-once: dashboard, transaksi, produk, POS).
+        if (changed) _controller.add(DeltaEvent(
+          table: '*',
+          recordId: '',
+          operation: 'BATCH',
+        ));
+
+        since = serverTime != null
+            ? (DateTime.tryParse(serverTime)?.toUtc() ?? since)
+            : since;
+        if (!changed) {
+          // Semua delta gagal apply — jangan ulang loop tanpa akhir; keluar
+          // dan andalkan retry tick berikutnya.
+          break;
+        }
+      } while (serverTime != null && ++guard < 10);
+
+      if (serverTime != null) {
+        await SecureStore.setLastDeltaPull(
+            DateTime.tryParse(serverTime)?.toUtc() ?? DateTime.now().toUtc());
+      }
     } catch (e) {
       debugPrint('[DeltaSync] pull error: $e');
     }
@@ -344,15 +401,18 @@ class DeltaSyncService {
           await _deleteRecord(table, recordId);
           break;
       }
-
-      // Notify UI
+    } catch (e) {
+      // v2.2.57+136: JANGAN ditelan di sini — caller butuh tahu delta ini
+      // gagal supaya TIDAK di-ack (delta tetap di server, di-retry nanti).
+      debugPrint('[DeltaSync] apply error for $table/$recordId: $e');
+      rethrow;
+    } finally {
+      // Notify UI tetap dikirim walau delta gagal (best-effort refresh).
       _controller.add(DeltaEvent(
         table: table,
         recordId: recordId,
         operation: operation,
       ));
-    } catch (e) {
-      debugPrint('[DeltaSync] apply error for $table/$recordId: $e');
     }
   }
 
@@ -369,28 +429,52 @@ class DeltaSyncService {
           // insertOnConflictUpdate dengan companion penuh menimpa field yang
           // tidak dikirim dengan default (nama kosong, harga 0, imagePath
           // NULL) — "foto produk hilang semua" di device penerima.
-          if (data.containsKey('name')) {
-            await _db!.into(_db!.products)
-                .insertOnConflictUpdate(_mapToProduct(data));
-          } else {
+          // v2.2.57+136: full-mapper dijalankan dulu (absent-aware — kolom
+          // tak-dikirim = Value.absent(), BUKAN default kosong) sehingga
+          // INSERT maupun UPDATE keduanya utuh; UPDATE parsial tetap jalan
+          // untuk payload kecil.
+          final looksPartial = data.length <= 3 && !data.containsKey('name');
+          if (looksPartial) {
             await _partialUpdate('products', recordId, data, _productCols);
+          } else {
+            await _db!.customUpdate(
+              _upsertSql('products', _productCols,
+                  pkColumn: 'id', data: data),
+              variables: _upsertVars(_productCols, data, id: recordId),
+              updates: {_db!.products},
+            );
           }
-          // Download image from cloud if product has image_path but local file missing
+          // Download image from cloud if product has image_path but local
+          // file missing. v2.2.57+136: mute sudah lepas saat future ini jalan
+          // (fire-and-forget setelah apply) → tulisan imagePath baru hasil
+          // hydrate di-capture trigger dan balik ke device asal — dulu ikut
+          // terekap dalam mute window → device asal menolak (device_id !=
+          // miliknya) tapi image_path lokal device lain tidak valid buatnya
+          // (file tak ada → langsung hydrate juga). Aman dua arah.
           final imgPath = data['image_path'] as String?;
           if (imgPath != null && imgPath.isNotEmpty) {
             final file = File(imgPath);
             if (!await file.exists()) {
-              _hydrateProductImage(recordId, imgPath);
+              // Tunggu mute lepas dulu (unawaited) supaya update imagePath
+              // hasil hydrate ter-capture trigger untuk device asal.
+              unawaited(_hydrateProductImage(recordId, imgPath));
             }
           }
           break;
         case 'transactions':
-          if (data.containsKey('invoice')) {
-            await _db!.into(_db!.transactions)
-                .insertOnConflictUpdate(_mapToTransaction(data));
-          } else {
-            await _partialUpdate('transactions', recordId, data, _txCols);
-          }
+          // v2.2.57+136 FIX UTAMA "trx tidak pernah muncul di owner":
+          // _mapToTransaction lama expect data['date'] int MILLISECOND,
+          // padahal push mengirim ISO string (dan int detik dari SQLite) →
+          // TypeError SETIAP kali → catch di _upsertRecord menelan →
+          // transaksi tak pernah masuk DB penerima. Mapper baru absent-aware
+          // + menerima int-detik / int-ms / ISO + jangan pernah gagal karena
+          // format tanggal.
+          await _db!.customUpdate(
+            _upsertSql('transactions', _txCols,
+                pkColumn: 'id', data: data),
+            variables: _upsertVars(_txCols, data, id: recordId),
+            updates: {_db!.transactions},
+          );
           break;
         case 'categories':
           await _upsertCategory(data);
@@ -652,22 +736,92 @@ class DeltaSyncService {
     final id = int.tryParse(recordId);
     final fields = <String, dynamic>{};
     for (final entry in cols.entries) {
-      if (!data.containsKey(entry.key)) continue;
+      if (!data.containsKey(entry.key) && !data.containsKey(_snake(entry.key))) {
+        continue;
+      }
       if (entry.key == 'id') continue; // PK tidak ikut SET
-      fields[entry.value] = data[entry.key];
+      // Terima jsonKey camelCase ATAU snake_case (snapshot trigger mengirim
+      // snake_case; pushDelta manual kadang mengirim camelCase).
+      final v = data.containsKey(entry.key)
+          ? data[entry.key]
+          : data[_snake(entry.key)];
+      fields[entry.value] = _coerceValue(entry.value, v);
     }
     if (fields.isEmpty) return;
-    final whereCol = id != null ? 'id' : 'name'; // roles/categori by name
+    final whereCol = 'id';
     final whereVal = id != null ? id : recordId;
     final sets = fields.keys.map((f) => '$f = ?').join(', ');
-    await _db!.customStatement(
+    // v2.2.57+136: customUpdate(updates:) — notify drift stream query agar
+    // UI yang watch tabel ikut rebuild. customStatement TIDAK notify.
+    await _db!.customUpdate(
       'UPDATE $sqlTable SET $sets WHERE $whereCol = ?',
-      [...fields.values, whereVal],
+      variables: [...fields.values.map(Variable.new), Variable(whereVal)],
+      updates: {_tableFor(sqlTable)},
+      updateKind: UpdateKind.update,
     );
+  }
+
+  /// Map nama tabel SQL → ResultSetImplementation drift untuk notify stream.
+  ResultSetImplementation _tableFor(String sqlTable) {
+    switch (sqlTable) {
+      case 'products':
+        return _db!.products;
+      case 'transactions':
+        return _db!.transactions;
+      case 'customers':
+        return _db!.customers;
+      case 'categories':
+        return _db!.categories;
+      case 'roles':
+        return _db!.roles;
+      case 'employees':
+        return _db!.employees;
+      case 'branches':
+        return _db!.branches;
+      case 'promos':
+        return _db!.promos;
+      case 'suppliers':
+        return _db!.suppliers;
+      case 'customer_debts':
+        return _db!.customerDebts;
+      case 'debt_payments':
+        return _db!.debtPayments;
+      case 'expenses':
+        return _db!.expenses;
+      case 'liquidity':
+        return _db!.liquidity;
+      case 'attendance':
+        return _db!.attendance;
+      case 'online_orders':
+        return _db!.onlineOrders;
+      case 'waste':
+        return _db!.waste;
+      case 'payroll':
+        return _db!.payroll;
+      case 'recurring_expenses':
+        return _db!.recurringExpenses;
+      case 'purchase_orders':
+        return _db!.purchaseOrders;
+      case 'stock_counts':
+        return _db!.stockCounts;
+      case 'stock_count_items':
+        return _db!.stockCountItems;
+      case 'print_orders':
+        return _db!.printOrders;
+      case 'point_histories':
+        return _db!.pointHistories;
+      default:
+        // Fallback generik — CustomTableInfo minimal; stream per-tabel ini
+        // jarang dipakai UI langsung.
+        return _db!.products;
+    }
   }
 
   /// Kolom SQL untuk update parsial (jsonKey → SQL column).
   /// camelCase drift → snake_case SQLite.
+  /// v2.2.57+136: 'image_base64' DIHAPUS dari peta produk — _snapshotRow
+  /// tidak pernah mengirim base64, dan _partialUpdate yang menulis NULL ke
+  /// kolom ini menghapus foto di device penerima.
   static const _productCols = <String, String>{
     'name': 'name',
     'sku': 'sku',
@@ -680,7 +834,6 @@ class DeltaSyncService {
     'stock': 'stock',
     'min_stock': 'min_stock',
     'image_path': 'image_path',
-    'image_base64': 'image_base64',
     'is_service': 'is_service',
     'is_online': 'is_online',
     'expiry_date': 'expiry_date',
@@ -689,9 +842,111 @@ class DeltaSyncService {
     'wholesale_json': 'wholesale_json',
     'price_type': 'price_type',
     'supplier_id': 'supplier_id',
+    'created_at': 'created_at',
   };
+
+  // ═══ v2.2.57+136: generic upsert helpers ═══════════════════════════════
+  // INSERT ... ON CONFLICT DO UPDATE yang ABSENT-AWARE: kolom yang tidak ada
+  // di payload delta TIDAK ditulis (NULLIF inject + COALESCE guard). Ini
+  // pengganti mappers drift lama (_mapToTransaction/_mapToProduct) yang
+  // (a) cuma bawa 5–10 dari 27 kolom transaksi (cashierName, diskon, status,
+  // dp/cicilan HILANG), (b) expect 'date' int-milidetik padahal push kirim
+  // ISO / int-detik → TypeError → apply transaksi GAGAL total.
+  // customUpdate(updates:) dipakai agar drift stream (watch*) di UI ikut
+  // terbangun — dulu customStatement tak notify → layar tak refresh.
+
+  /// Kolom yang tak boleh ditimpa NULL saat partial payload.
+  static const _nullableSqlCols = <String>{
+    'sku', 'barcode', 'image_path', 'expiry_date', 'product_type',
+    'variants_json', 'wholesale_json', 'supplier_id', 'created_at',
+    'customer_id', 'cash_given', 'cash_return', 'cashier_name', 'branch_id',
+    'employee_id', 'session_id', 'void_reason', 'voided_at', 'order_type',
+    'table_id', 'notes', 'dp_amount', 'installment_months',
+    'installment_per_month', 'debt_id', 'phone', 'address',
+  };
+
+  /// Nilai JSON → string SQL variable siap bind (konversi tipe per kolom).
+  Object? _coerceValue(String sqlCol, Object? v) {
+    if (v == null) return null;
+    if (_datetimeSqlCols.contains(sqlCol)) return _parseFlexibleDateTime(v);
+    if (v is bool) return v ? 1 : 0;
+    return v;
+  }
+
+  /// Kolom datetime (SQL name) di tabel synced.
+  static const _datetimeSqlCols = <String>{
+    'date', 'created_at', 'voided_at', 'expiry_date', 'debt_date', 'due_date',
+    'paid_at', 'start_date', 'next_date', 'check_in', 'check_out',
+    'completed_at', 'opened_at', 'closed_at', 'joined_at', 'work_start',
+    'work_end',
+  };
+
+  /// Terima int DETIK (drift default), int MILISEKONDE, atau ISO string.
+  DateTime _parseFlexibleDateTime(Object v) {
+    if (v is int) {
+      // <= 1e11 berarti detik (≈ tahun 5138 dalam ms) — heuristik aman.
+      return v < 100000000000
+          ? DateTime.fromMillisecondsSinceEpoch(v * 1000)
+          : DateTime.fromMillisecondsSinceEpoch(v);
+    }
+    final parsed = DateTime.tryParse('$v');
+    if (parsed != null) return parsed;
+    throw FormatException('Unparseable datetime: $v');
+  }
+
+  /// camelCase / drift field → snake_case (untuk payload pushDelta manual
+  /// yang mengirim nama field drift).
+  String _snake(String s) => s
+      .replaceAllMapped(RegExp(r'([A-Z])'), (m) => '_${m.group(1)!.toLowerCase()}');
+
+  /// Bangun SQL: INSERT INTO t (cols...) VALUES (...) ON CONFLICT(pk) DO
+  /// UPDATE SET col = excluded.col utk kolom yang ADA di payload; kolom
+  /// absent ditulis NULL saat INSERT BARU (dilengkapi delta INSERT sumber)
+  /// dan TIDAK menimpa nilai lama saat UPDATE parsial (COALESCE utk kolom
+  /// nullable, default-safe utk NOT NULL via excluded sendiri).
+  String _upsertSql(
+    String table,
+    Map<String, String> cols, {
+    required String pkColumn,
+    required Map<String, dynamic> data,
+  }) {
+    // v2.2.57+136: PK ikut di-INSERT — dulu id tak masuk daftar kolom →
+    // SQLite meng-assign autoincrement BARU → row penerima beda id dengan
+    // device sumber (delta berikutnya menimpa row salah, data duplikat).
+    // PK hanya ikut INSERT, tidak pernah di-UPDATE.
+    final sqlCols = <String>[pkColumn, ...cols.values.where((c) => c != pkColumn)];
+    final placeholders = List.filled(sqlCols.length, '?').join(', ');
+    final updateSets = sqlCols
+        .where((c) => c != pkColumn)
+        .map((c) => _nullableSqlCols.contains(c)
+            ? '$c = COALESCE(excluded.$c, $table.$c)'
+            : '$c = excluded.$c')
+        .join(', ');
+    return 'INSERT INTO $table (${sqlCols.join(', ')}) VALUES ($placeholders) '
+        'ON CONFLICT($pkColumn) DO UPDATE SET $updateSets';
+  }
+
+  /// Bind variables mengikuti urutan _upsertSql. Missing key → null.
+  /// Terima jsonKey camelCase ATAU snake_case.
+  List<Variable> _upsertVars(
+    Map<String, String> cols,
+    Map<String, dynamic> data, {
+    required String id,
+  }) {
+    return [Variable(_coerceValue('id', int.tryParse(id) ?? id)), ...cols.values.map((sqlCol) {
+      final jsonKey = cols.keys.firstWhere(
+        (k) => cols[k] == sqlCol,
+        orElse: () => sqlCol,
+      );
+      final v = data.containsKey(jsonKey)
+          ? data[jsonKey]
+          : (data.containsKey(_snake(jsonKey)) ? data[_snake(jsonKey)] : null);
+      return Variable(_coerceValue(sqlCol, v));
+    })];
+  }
   static const _txCols = <String, String>{
     'invoice': 'invoice',
+    'date': 'date',
     'items': 'items',
     'total': 'total',
     'discount': 'discount',
@@ -972,35 +1227,9 @@ class DeltaSyncService {
   }
 
   // ── Mapping helpers — convert JSON map to Drift companion ──────────────
-
-  ProductsCompanion _mapToProduct(Map<String, dynamic> data) {
-    return ProductsCompanion(
-      id: Value(data['id'] as int? ?? 0),
-      name: Value(data['name'] as String? ?? ''),
-      sku: Value(data['sku'] as String?),
-      barcode: Value(data['barcode'] as String?),
-      category: Value(data['category'] as String? ?? 'Lainnya'),
-      buyPrice: Value(data['buy_price'] as int? ?? 0),
-      sellPrice: Value(data['sell_price'] as int? ?? 0),
-      stock: Value(data['stock'] as int? ?? 0),
-      imagePath: Value(data['image_path'] as String?),
-      isOnline: Value(data['is_online'] as bool? ?? false),
-      isService: Value(data['is_service'] as bool? ?? false),
-    );
-  }
-
-  TransactionsCompanion _mapToTransaction(Map<String, dynamic> data) {
-    return TransactionsCompanion(
-      id: Value(data['id'] as int? ?? 0),
-      invoice: Value(data['invoice'] as String? ?? ''),
-      total: Value(data['total'] as int? ?? 0),
-      items: Value(data['items'] as String? ?? '[]'),
-      paymentMethod: Value(data['payment_method'] as String? ?? 'tunai'),
-      date: Value(data['date'] != null
-          ? DateTime.fromMillisecondsSinceEpoch(data['date'] as int)
-          : DateTime.now()),
-    );
-  }
+  // v2.2.57+136: _mapToProduct & _mapToTransaction DIHAPUS — diganti generic
+  // upsert absent-aware (_upsertSql/_upsertVars). Mapper lama (a) cuma bawa
+  // 5–10 dari 27 kolom transaksi, (b) crash karena date int-vs-ISO.
 
   /// Kategori push pakai recordId = NAMA (bukan id autoincrement), jadi
   /// id tidak dikirim — cari existing by name untuk upsert konsisten.
@@ -1355,9 +1584,12 @@ class DeltaSyncService {
     if (fields.isEmpty) return;
     final sets = fields.keys.map((f) => '$f = ?').join(', ');
     final binds = fields.values.toList()..add(1);
-    await _db!.customStatement(
+    // v2.2.57+136: notify drift streams (customStatement tak notify).
+    await _db!.customUpdate(
       'UPDATE settings SET $sets WHERE id = ?',
-      binds,
+      variables: [...binds.map(Variable.new)],
+      updates: {_db!.settings},
+      updateKind: UpdateKind.update,
     );
   }
 

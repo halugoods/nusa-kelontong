@@ -90,6 +90,18 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
     _search.addListener(_onSearchChanged);
     _initGrid();
     _load();
+    // v2.2.57+136: produk/kategori dari device lain tampil tanpa pull-refresh
+    // manual (edit produk di kasir langsung terlihat di device owner).
+    try {
+      DeltaSyncService.I.stream.listen((e) {
+        if (!mounted) return;
+        if (e.table == '*' ||
+            e.table == 'products' ||
+            e.table == 'categories') {
+          _load();
+        }
+      });
+    } catch (_) {}
   }
 
   @override

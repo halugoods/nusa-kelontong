@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/services/google_auth_service.dart';
 import 'package:nusa_kasir/core/services/call_service.dart';
 import 'package:nusa_kasir/core/services/sound_service.dart';
@@ -158,6 +159,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   void initState() {
     super.initState();
     _init();
+    // v2.2.57+136: refresh data (omzet/laba/stok notif) saat delta sync
+    // mengubah DB — dulu dashboard cuma reload saat init/pull-route, trx
+    // kasir dari device lain tak terlihat sampai reopen.
+    try {
+      DeltaSyncService.I.stream.listen((_) {
+        if (mounted) _load();
+      });
+    } catch (_) {}
   }
 
   Future<void> _init() async {

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/sound_service.dart';
 import 'package:nusa_kasir/core/utils/format_rupiah.dart';
@@ -80,6 +81,19 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     _loadCashier();
     _preloadProducts();
     _loadGridColumns();
+    // v2.2.57+136: produk baru / perubahan stok dari device lain tampil
+    // tanpa reopen. Keranjang yang SEDANG diisi tidak pernah diganggu —
+    // reload hanya saat keranjang kosong.
+    try {
+      DeltaSyncService.I.stream.listen((e) {
+        if (!mounted || ref.read(cartProvider).isNotEmpty) return;
+        if (e.table == '*' ||
+            e.table == 'products' ||
+            e.table == 'categories') {
+          _preloadProducts();
+        }
+      });
+    } catch (_) {}
     if (NusaConfig.isFnbVariant) _loadTables();
     _searchFocus.addListener(() {
       if (mounted) setState(() => _searching = _searchFocus.hasFocus);
