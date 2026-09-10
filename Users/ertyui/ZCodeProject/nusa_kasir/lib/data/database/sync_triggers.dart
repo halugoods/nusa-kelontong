@@ -14,8 +14,12 @@
 // lalu di-push ke cloud. DELETE dikirim tanpa data (apply-side delete by pk).
 //
 // Loop guard: saat MENGAPLIKAN delta dari device lain, DeltaSyncService
-// men-set temp.sync_muted = 1 supaya tulisan apply lokal tidak memicu
+// men-set sync_muted = 1 supaya tulisan apply lokal tidak memicu
 // trigger lagi (ping-pong tanpa ujung). WHEN clause trigger cek tabel mute.
+// v2.2.57+135: tabel mute PINDAH ke main database — dulu TEMP TABLE dan
+// SQLite menolak trigger yang mereferensi database temp ("trigger cannot
+// reference objects in database temp") → trigger tidak pernah terpasang
+// sama sekali (silent failure, error ditelan non-fatal) → outbox kosong.
 //
 // Outbox dibuat via raw SQL di beforeOpen (BUKAN drift table) supaya tidak
 // perlu naikkan schemaVersion / build_runner — idempoten & murah.
@@ -84,18 +88,34 @@ Future<void> installDeltaSyncTriggers(AppDatabase db) async {
     'CREATE INDEX IF NOT EXISTS idx_sync_outbox_pk ON sync_outbox(table_name, record_pk)',
   );
 
-  // ── Mute guard (temp, per koneksi) ──
+  // ── Mute guard ──
+  // v2.2.57+135 FIX KRITIS: dulu tabel ini dibuat sebagai TEMP TABLE —
+  // SQLite MENOLAK trigger yang mereferensi objek di database temp
+  // ("trigger cannot reference objects in database temp") → SEMUA trigger
+  // gagal terpasang (error ditelan non-fatal) → outbox selalu kosong →
+  // TIDAK ADA delta yang di-push ke cloud walau app +134. Pindah ke tabel
+  // main (persist, 1 baris) supaya WHEN clause valid. Idempoten.
   await db.customStatement(
-    'CREATE TEMP TABLE IF NOT EXISTS sync_muted (m INTEGER NOT NULL DEFAULT 0)',
+    'CREATE TABLE IF NOT EXISTS sync_muted (m INTEGER NOT NULL DEFAULT 0)',
   );
   await db.customStatement(
-    'INSERT OR IGNORE INTO temp.sync_muted (m) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM temp.sync_muted)',
+    'INSERT OR IGNORE INTO sync_muted (m) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM sync_muted)',
   );
 
   // ── Trigger per tabel ──
+  // v2.2.57+135: DROP dulu trigger lama dari build +134 — di DB yang pernah
+  // dibuka +134, trigger bisa terlanjur terpasang saat temp.sync_muted masih
+  // ada di koneksi itu (validasi referensi temp terjadi saat CREATE, jadi
+  // trigger lama menunjuk tabel temp yang tidak ada di koneksi baru → WHEN
+  // error saat fire). DROP IF EXISTS memastikan state bersih lalu CREATE
+  // ulang dengan mute main-db. Murah (75 statement idempoten di beforeOpen).
   for (final table in kSyncedTables) {
     final pk = syncPkColumnFor(table);
-    final guard = '(SELECT COALESCE((SELECT m FROM temp.sync_muted LIMIT 1), 0) = 0)';
+    final guard = '(SELECT COALESCE((SELECT m FROM sync_muted LIMIT 1), 0) = 0)';
+
+    await db.customStatement('DROP TRIGGER IF EXISTS trg_sync_${table}_ins');
+    await db.customStatement('DROP TRIGGER IF EXISTS trg_sync_${table}_upd');
+    await db.customStatement('DROP TRIGGER IF EXISTS trg_sync_${table}_del');
 
     await db.customStatement('''
       CREATE TRIGGER IF NOT EXISTS trg_sync_${table}_ins AFTER INSERT ON $table
@@ -126,10 +146,11 @@ Future<void> installDeltaSyncTriggers(AppDatabase db) async {
 
 /// Set / clear mute flag (dipakai DeltaSyncService saat mengaplikasikan
 /// delta remote supaya apply tidak di-capture lagi).
+/// v2.2.57+135: tabel main (bukan temp) — lihat catatan installDeltaSyncTriggers.
 Future<void> setSyncMuted(AppDatabase db, bool muted) async {
   try {
     await db.customStatement(
-      'UPDATE temp.sync_muted SET m = ?',
+      'UPDATE sync_muted SET m = ?',
       [muted ? 1 : 0],
     );
   } catch (_) {

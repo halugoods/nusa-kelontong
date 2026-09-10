@@ -39,6 +39,8 @@ class DeltaSyncService {
 
   static const _pushDebounce = Duration(seconds: 2);
   static const _pullInterval = Duration(seconds: 30);
+  // v2.2.57+135: interval flush safety-net (outbox dibaca trigger SQLite).
+  static const _flushInterval = Duration(seconds: 5);
   static const _maxBatchSize = 50;
 
   final _controller = StreamController<DeltaEvent>.broadcast();
@@ -48,6 +50,7 @@ class DeltaSyncService {
   bool _started = false;
   Timer? _pushTimer;
   Timer? _periodicPull;
+  Timer? _periodicFlush;
   String? _deviceId;
   String? _uid;
 
@@ -68,6 +71,14 @@ class DeltaSyncService {
 
     // Fallback periodic pull
     _periodicPull = Timer.periodic(_pullInterval, (_) => _pull());
+
+    // v2.2.57+135: safety-net periodic flush — trigger menulis outbox
+    // langsung dari SQLite TANPA tahu DeltaSyncService ada. Dulu flush cuma
+    // jalan via pushDelta shim (hanya dipanggil repo tertentu) / flush awal —
+    // perubahan yang ditulis jalur lain (mis. saveTransaction) menumpuk di
+    // outbox sampai perubahan berikutnya. Sekarang: coalesce — kalau outbox
+    // kosong, flush jadi no-op murah; kalau ada isi, keluar dalam 2 dtk.
+    _periodicFlush = Timer.periodic(_flushInterval, (_) => _flushOutbox());
 
     // v2.2.57+134: flush sisa outbox dari sesi sebelumnya + outbox yg
     // tertimbun saat offline (retry stranded flush).
@@ -1445,6 +1456,8 @@ class DeltaSyncService {
     _pushTimer = null;
     _periodicPull?.cancel();
     _periodicPull = null;
+    _periodicFlush?.cancel();
+    _periodicFlush = null;
     _db = null;
     _started = false;
   }
