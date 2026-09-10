@@ -559,6 +559,9 @@ def main():
     lite_only = "--lite-only" in sys.argv
     if lite_only:
         sys.argv = [a for a in sys.argv if a != "--lite-only"]
+    full_only = "--full-only" in sys.argv
+    if full_only:
+        sys.argv = [a for a in sys.argv if a != "--full-only"]
     requested = set(sys.argv[1:])
     unknown = requested - {v["id"] for v in VARIANTS}
     if unknown:
@@ -578,12 +581,12 @@ def main():
         os.makedirs(OUTPUT_DIR, exist_ok=True)
         # Build each variant twice: FULL (cloud) + LITE (offline)
         # Skip kelontong Lite (already built manually)
-        total_builds = len(variants) * (1 if lite_only else 2)
+        total_builds = len(variants) * (1 if lite_only or full_only else 2)
         skip_variants_lite = set()  # Add variant id here if Lite already built
         build_idx = 0
         for variant in variants:
             vid = variant["id"]
-            lite_modes = [True] if lite_only else [False, True]
+            lite_modes = [False] if full_only else ([True] if lite_only else [False, True])
             for lite in lite_modes:
                 build_idx += 1
                 mode = "LITE" if lite else "FULL"
