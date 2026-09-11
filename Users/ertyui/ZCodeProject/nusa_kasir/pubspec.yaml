@@ -1,7 +1,7 @@
 name: nusa_kasir
 description: "NUSA - Aplikasi Kasir untuk Rumah Makan & Kafe"
 publish_to: 'none'
-version: 2.2.57+136
+version: 2.2.57+137
 
 environment:
   sdk: ^3.12.2

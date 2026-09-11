@@ -23,6 +23,14 @@ class RealtimeBackupNotifier {
   StreamSubscription<dynamic>? _sub;
   bool _shouldRun = false;
   Timer? _reconnectTimer;
+  Timer? _pingTimer;
+
+  // v2.2.57+137: heartbeat ping tiap 60 dtk. DO menjawab 'pong' via
+  // setWebSocketAutoResponse TANPA membangunkan DO (gratis). Tanpa ini,
+  // koneksi TCP diam >100 dtk dibunuh NAT/proxy tengah jalan → device
+  // "sudah WS" tapi sebenarnya MATI (half-open) → event realtime tak pernah
+  // sampai, device hanya dapat data lewat poll 30 dtk.
+  static const _pingInterval = Duration(seconds: 60);
 
   // v2.2.57+130 (A3): exponential backoff untuk reconnect — hindari hammer
   // server saat worker restart / network flap. Delay tumbuh 1s → 2s → 4s → …
@@ -67,6 +75,7 @@ class RealtimeBackupNotifier {
       // mulai dari delay awal lagi.
       _attempt = 0;
       _channel = ws;
+      _startPing();
       _sub = ws.stream.listen((message) {
         try {
           // Pesan gateway: JSON string {"event": ..., "payload": {...}}.
@@ -101,6 +110,22 @@ class RealtimeBackupNotifier {
     }
   }
 
+  /// v2.2.57+137: kirim 'ping' periodik supaya NAT/proxy tidak memutus
+  /// koneksi diam. Kalau sink.add gagal (koneksi sudah mati), langsung
+  /// reconnect — jangan tunggu poll berikutnya.
+  void _startPing() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(_pingInterval, (_) {
+      final ws = _channel;
+      if (ws == null) return;
+      try {
+        ws.sink.add('ping');
+      } catch (_) {
+        _scheduleReconnect();
+      }
+    });
+  }
+
   void _scheduleReconnect() {
     if (!_shouldRun) return;
     _reconnectTimer?.cancel();
@@ -122,10 +147,26 @@ class RealtimeBackupNotifier {
     });
   }
 
+  /// v2.2.57+137: paksa reconnect SEKARANG (dipanggil saat app resume dari
+  /// background — selama pause, OS boleh membunuh koneksi WS tanpa callback
+  /// onDone, sehingga tanpa ini device menunggu tick ping/poll berikutnya).
+  void forceReconnect() {
+    if (!_shouldRun) return;
+    _reconnectTimer?.cancel();
+    _sub?.cancel().catchError((_) {});
+    _sub = null;
+    _channel = null;
+    _pingTimer?.cancel();
+    _pingTimer = null;
+    _connect();
+  }
+
   Future<void> stop() async {
     _shouldRun = false;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _pingTimer?.cancel();
+    _pingTimer = null;
     try {
       await _sub?.cancel();
     } catch (_) {}

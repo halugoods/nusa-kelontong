@@ -37,8 +37,12 @@ class DeltaSyncService {
   DeltaSyncService._();
   static final DeltaSyncService I = DeltaSyncService._();
 
-  static const _pushDebounce = Duration(seconds: 2);
-  static const _pullInterval = Duration(seconds: 30);
+  // v2.2.57+137: debounce 500ms — dulu 2 dtk bikin push "terasa kaku";
+  // outbox tetap coalesce (perubahan beruntun = 1 push), hanya lebih cepat.
+  static const _pushDebounce = Duration(milliseconds: 500);
+  // v2.2.57+137: fallback poll 20 dtk (dulu 30) — angka miskin hanya dipakai
+  // saat WS mati/putus; dengan heartbeat WS jalur ini nyaris tak pernah jalan.
+  static const _pullInterval = Duration(seconds: 20);
   // v2.2.57+135: interval flush safety-net (outbox dibaca trigger SQLite).
   static const _flushInterval = Duration(seconds: 5);
   static const _maxBatchSize = 50;
@@ -48,11 +52,26 @@ class DeltaSyncService {
 
   AppDatabase? _db;
   bool _started = false;
+  bool _pulling = false;
   Timer? _pushTimer;
   Timer? _periodicPull;
   Timer? _periodicFlush;
   String? _deviceId;
   String? _uid;
+
+  /// v2.2.57+137: pull segera (dipanggil WS event / resume) dengan guard
+  /// anti tumpang-tindih — pull yang belum selesai tidak diulang, dan event
+  /// beruntun dalam 1 detik di-coalesce (stream broadcast bisa 2 event per
+  /// push: 'sync' bridge + app echo).
+  Future<void> pullNow() async {
+    if (_pulling) return;
+    _pulling = true;
+    try {
+      await _pull();
+    } finally {
+      _pulling = false;
+    }
+  }
 
   Future<void> start(AppDatabase db) async {
     if (_started) return;
@@ -64,13 +83,14 @@ class DeltaSyncService {
     // Register device with cloud
     await _registerDevice();
 
-    // Listen for remote sync events (from WS backup_updated channel)
+    // Listen for remote sync events (from WS backup_updated channel) —
+    // v2.2.57+137: pakai pullNow() ber-guard, bukan _pull() mentah.
     try {
-      RealtimeSyncService.I.stream.listen((_) => _pull());
+      RealtimeSyncService.I.stream.listen((_) => pullNow());
     } catch (_) {}
 
-    // Fallback periodic pull
-    _periodicPull = Timer.periodic(_pullInterval, (_) => _pull());
+    // Fallback periodic pull (jalur cadangan — jalur utama = WS event).
+    _periodicPull = Timer.periodic(_pullInterval, (_) => pullNow());
 
     // v2.2.57+135: safety-net periodic flush — trigger menulis outbox
     // langsung dari SQLite TANPA tahu DeltaSyncService ada. Dulu flush cuma
@@ -116,6 +136,11 @@ class DeltaSyncService {
     _pushTimer?.cancel();
     _pushTimer = Timer(_pushDebounce, _flushOutbox);
   }
+
+  /// v2.2.57+137: flush SEGERA (bypass debounce) — dipakai checkout saat
+  /// transaksi tersimpan supaya delta sudah ada di server sebelum broadcast
+  /// "backup_updated" sampai ke device lain.
+  Future<void> flushNow() => _flushOutbox();
 
   /// v2.2.57+134: flush outbox hasil trigger — ambil baris TERAKHIR per
   /// (table, pk), baca snapshot datanya langsung dari DB, kirim ke cloud.

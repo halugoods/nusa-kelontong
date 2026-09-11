@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async' show unawaited;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -1135,6 +1136,18 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
     onResult(norm);
   }
 
+  /// v2.2.57+137: flush delta outbox SEKARANG lalu broadcast "ada data baru"
+  /// — urutannya penting: broadcast yang sampai lebih dulu dari datanya bikin
+  /// owner pull ke server yang masih kosong (kesan tidak realtime).
+  Future<void> _pushAndAnnounce() async {
+    try {
+      await DeltaSyncService.I.flushNow();
+    } catch (_) {}
+    try {
+      await RealtimeBackupNotifier.I.broadcastUpdated();
+    } catch (_) {}
+  }
+
   Future<void> _confirmPayment() async {
     final cart = ref.read(cartProvider);
     if (cart.isEmpty) {
@@ -1289,30 +1302,23 @@ class _CheckoutScreenState extends ConsumerState<CheckoutScreen> {
         // knows to pull within ~1s instead of waiting for the 5-min
         // debounce upload cycle. Upload itself stays debounced (egress),
         // but the lightweight WS broadcast is near-zero cost.
-        try {
-          RealtimeBackupNotifier.I.broadcastUpdated();
-        } catch (_) {}
+        // v2.2.57+137: urutan PENTING — trigger SQLite sudah menulis outbox
+        // saat saveTransaction; flush SEKARANG (bypass debounce 500ms)
+        // supaya delta benar-benar SUDAH di server saat broadcast sampai ke
+        // owner. Dulu broadcast jalan duluan → owner pull → delta belum ada →
+        // dapat datanya belakangan lewat tick 20/30 dtk (kesan "tidak realtime").
+        unawaited(_pushAndAnnounce());
 
         // v2.2.57+131: announce transaction via delta sync so other devices
         // can apply the row-level change without a full backup pull.
+        // v2.2.57+137: shim pushDelta tidak lagi mengirim payload manual —
+        // trigger SQLite sudah menulis baris lengkap (snapshot DB saat flush)
+        // ke outbox; cukup minta flush sekarang (lihat _pushAndAnnounce).
         try {
-          // Invoice dibuat di dalam repository — ambil ulang row-nya supaya
-          // delta membawa invoice yang PERSIS sama dengan DB lokal.
-          final savedTx = await (db.select(db.transactions)
-                ..where((t) => t.id.equals(savedTxId)))
-              .getSingleOrNull();
           DeltaSyncService.I.pushDelta(
             table: 'transactions',
             recordId: savedTxId.toString(),
             operation: 'INSERT',
-            data: {
-              'id': savedTxId,
-              'invoice': savedTx?.invoice ?? '',
-              'total': _total,
-              'items': jsonEncode(cart.map((e) => e.toJson()).toList()),
-              'payment_method': _paymentMethod ?? 'tunai',
-              'date': DateTime.now().millisecondsSinceEpoch,
-            },
           );
         } catch (_) {}
 

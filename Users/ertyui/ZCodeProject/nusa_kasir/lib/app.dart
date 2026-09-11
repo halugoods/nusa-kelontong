@@ -328,6 +328,7 @@ class NusaApp extends ConsumerStatefulWidget {
 
 class _NusaAppState extends ConsumerState<NusaApp> with WidgetsBindingObserver {
   late final GoRouter _router = buildRouter(widget.initialLocation, ref);
+  DateTime? _lastRealtimePull; // v2.2.57+137: de-dupe soft pull
 
   @override
   void initState() {
@@ -342,12 +343,18 @@ class _NusaAppState extends ConsumerState<NusaApp> with WidgetsBindingObserver {
     // adopt if we can't safely hot-apply, otherwise close+restore+login).
     try {
       RealtimeBackupNotifier.I.start();
+      // v2.2.57+137: event backup_updated DIKONSUMSI delta sync (pull baris
+      // <1 dtk). Listener lama di bawah cuma "soft adopt" timestamp — tanpa
+      // refresh layar — dan bikin hasil pull delta tidak pernah tampil sampai
+      // tick berikutnya. app-level cukup de-dupe + trik UI legacy: pull full
+      // backup Maks 1x / 2 dtk.
       RealtimeSyncService.I.stream.listen((_) {
-        // Soft pull: just adopt cloud time. Hot-apply on push event would
-        // clobber unsaved UI state; next natural launch picks up via
-        // _applyPendingRestore. This still brings "another device updated"
-        // to within ~1s perceived latency for read-only screens (dashboard,
-        // reports) since they refetch on each rebuild.
+        final now = DateTime.now();
+        if (_lastRealtimePull != null &&
+            now.difference(_lastRealtimePull!) < const Duration(seconds: 2)) {
+          return;
+        }
+        _lastRealtimePull = now;
         try {
           ref.read(autoSyncProvider).pullNow();
         } catch (_) {}
@@ -392,6 +399,18 @@ class _NusaAppState extends ConsumerState<NusaApp> with WidgetsBindingObserver {
     // v2.2.57: on resume, pull immediately so devices that were idle on a
     // different network catch up within milliseconds instead of waiting for
     // the 30s periodic timer.
+    // v2.2.57+137: saat resume dari background, OS kerap membunuh koneksi WS
+    // TANPA callback onDone (half-open) — device mengira masih terhubung
+    // padahal event tak pernah sampai. Paksa reconnect + pull delta segera
+    // supaya perubahan yang terjadi selama background masuk <1 dtk.
+    if (state == AppLifecycleState.resumed) {
+      try {
+        RealtimeBackupNotifier.I.forceReconnect();
+      } catch (_) {}
+      try {
+        DeltaSyncService.I.pullNow();
+      } catch (_) {}
+    }
     if (state == AppLifecycleState.resumed) {
       try {
         ref.read(autoSyncProvider).pullNow();
