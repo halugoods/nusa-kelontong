@@ -1188,10 +1188,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   /// Pre-fetch flip card data for the profile card back side.
-  /// v2.2.57+138: employeeId boleh null (tanpa sesi karyawan, mis. owner
-  /// default / restore). Statistik global tetap dihitung; bagian yang butuh
-  /// employeeId (laci/shift/hadir) dilewati — sebelumnya fungsi return awal
-  /// saat null → card flip 0 semua.
+  /// v2.2.57+139: safe cast + per-section try-catch. v2.2.57+138: employeeId
+  /// boleh null (tanpa sesi karyawan, mis. owner default / restore).
   Future<void> _fetchCardData(int? employeeId) async {
     try {
       final db = ref.read(databaseProvider);
@@ -1203,74 +1201,100 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final branchId =
           _activeBranch?.id ?? ref.read(employeeSessionProvider)?.branchId;
 
+      int penjualan = 0, trxCount = 0, laba = 0;
+      int omzet = 0, transaksiBulan = 0;
+      int modalAwal = 0, totalLaci = 0, hadirDays = 0, pendingItems = 0;
+      String? shiftHours;
+
       // Today's sales summary
-      final sum = await reportRepo.summary(
-        from: today,
-        to: now,
-        branchId: branchId,
-      );
-      final penjualan = sum['omzet'] as int;
-      final trxCount = sum['count'] as int;
+      try {
+        final sum = await reportRepo.summary(
+          from: today,
+          to: now,
+          branchId: branchId,
+        );
+        penjualan = (sum['omzet'] as num?)?.toInt() ?? 0;
+        trxCount = (sum['count'] as num?)?.toInt() ?? 0;
+      } catch (e) {
+        debugPrint('[Dashboard] fetchCardData summary error: $e');
+      }
 
       // Profit — use real P&L calculation (same as Laporan menu)
-      final pl = await reportRepo.profitLoss(
-        from: today,
-        to: now,
-        branchId: branchId,
-      );
-      final laba = (pl['labaBersih'] as int?) ?? 0;
+      try {
+        final pl = await reportRepo.profitLoss(
+          from: today,
+          to: now,
+          branchId: branchId,
+        );
+        laba = (pl['labaBersih'] as num?)?.toInt() ?? 0;
+      } catch (e) {
+        debugPrint('[Dashboard] fetchCardData profitLoss error: $e');
+      }
 
       // Cash drawer + shift — hanya saat ada employeeId
-      int modalAwal = 0;
-      int totalLaci = 0;
-      String? shiftHours;
       if (employeeId != null) {
-        _cardEmployeeId = employeeId;
-        final todayAtt = await attRepo.getToday(employeeId);
-        modalAwal = todayAtt?.pettyCash ?? 0;
-        totalLaci = todayAtt?.finalCash ?? modalAwal;
-        if (todayAtt?.checkIn != null) {
-          final parts = todayAtt!.checkIn!.split(':');
-          if (parts.length >= 2) {
-            final h = int.tryParse(parts[0]) ?? 0;
-            final m = int.tryParse(parts[1]) ?? 0;
-            final diff = now.difference(
-              DateTime(now.year, now.month, now.day, h, m),
-            );
-            if (diff.inMinutes > 0) {
-              shiftHours = '${diff.inHours}j ${diff.inMinutes.remainder(60)}m';
+        try {
+          _cardEmployeeId = employeeId;
+          final todayAtt = await attRepo.getToday(employeeId);
+          modalAwal = todayAtt?.pettyCash ?? 0;
+          totalLaci = todayAtt?.finalCash ?? modalAwal;
+          if (todayAtt?.checkIn != null) {
+            final parts = todayAtt!.checkIn!.split(':');
+            if (parts.length >= 2) {
+              final h = int.tryParse(parts[0]) ?? 0;
+              final m = int.tryParse(parts[1]) ?? 0;
+              final diff = now.difference(
+                DateTime(now.year, now.month, now.day, h, m),
+              );
+              if (diff.inMinutes > 0) {
+                shiftHours = '${diff.inHours}j ${diff.inMinutes.remainder(60)}m';
+              }
             }
           }
+        } catch (e) {
+          debugPrint('[Dashboard] fetchCardData attendance error: $e');
         }
       }
       final selisihLaci = totalLaci - modalAwal - penjualan;
 
       // Monthly data
-      final monthStart = DateTime(now.year, now.month, 1);
-      final monthSum = await reportRepo.summary(
-        from: monthStart,
-        to: now,
-        branchId: branchId,
-      );
-      final omzet = monthSum['omzet'] as int;
-      final transaksiBulan = monthSum['count'] as int;
+      try {
+        final monthStart = DateTime(now.year, now.month, 1);
+        final monthSum = await reportRepo.summary(
+          from: monthStart,
+          to: now,
+          branchId: branchId,
+        );
+        omzet = (monthSum['omzet'] as num?)?.toInt() ?? 0;
+        transaksiBulan = (monthSum['count'] as num?)?.toInt() ?? 0;
+      } catch (e) {
+        debugPrint('[Dashboard] fetchCardData monthly error: $e');
+      }
 
-      // Attendance — hanya saat ada employeeId
-      int hadirDays = 0;
+      // Attendance history — hanya saat ada employeeId
       if (employeeId != null) {
-        final history = await attRepo.history(employeeId: employeeId);
-        hadirDays = history
-            .where(
-              (a) =>
-                  a.date.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-                  a.checkIn != null,
-            )
-            .length;
+        try {
+          final monthStart = DateTime(now.year, now.month, 1);
+          final history = await attRepo.history(employeeId: employeeId);
+          hadirDays = history
+              .where(
+                (a) =>
+                    a.date.isAfter(monthStart.subtract(const Duration(days: 1))) &&
+                    a.checkIn != null,
+              )
+              .length;
+        } catch (e) {
+          debugPrint('[Dashboard] fetchCardData history error: $e');
+        }
       }
       final totalDays = now.day;
 
       // Pending online orders
-      final pendingItems = await onlineRepo.countPending();
+      try {
+        pendingItems = await onlineRepo.countPending();
+      } catch (e) {
+        debugPrint('[Dashboard] fetchCardData pending error: $e');
+      }
 
       if (mounted) {
         setState(() {
@@ -1292,7 +1316,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         });
       }
     } catch (e) {
-      debugPrint('[Dashboard] fetchCardData error: $e');
+      debugPrint('[Dashboard] fetchCardData FATAL error: $e');
     }
   }
 

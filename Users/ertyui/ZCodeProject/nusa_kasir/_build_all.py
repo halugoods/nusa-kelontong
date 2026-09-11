@@ -522,7 +522,7 @@ def build_apk(variant_id: str, lite: bool = False):
     if r.returncode != 0:
         print(f"  ❌ pub get failed:\n{r.stderr[-500:]}")
         return False
-    mode = "LITE (offline)" if lite else "FULL (cloud)"
+    mode = "LITE (offline)" if lite else "PRO (cloud)"
     print(f"  → Building release APK [{mode}]...")
     started = time.time()
     # Build command — add --dart-define for Lite builds (offline, no Google/Auth)
@@ -555,7 +555,7 @@ def validate_variant(variant: dict):
 
 
 def main():
-    # v2.2.57+130: Lite-only mode (FULL release jalan terpisah)
+    # v2.2.57+130: Lite-only mode (PRO release jalan terpisah)
     lite_only = "--lite-only" in sys.argv
     if lite_only:
         sys.argv = [a for a in sys.argv if a != "--lite-only"]
@@ -579,7 +579,7 @@ def main():
         for source, backup in backups:
             shutil.copy2(source, backup)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        # Build each variant twice: FULL (cloud) + LITE (offline)
+        # Build each variant twice: PRO (cloud) + LITE (offline)
         # Skip kelontong Lite (already built manually)
         total_builds = len(variants) * (1 if lite_only or full_only else 2)
         skip_variants_lite = set()  # Add variant id here if Lite already built
@@ -589,9 +589,9 @@ def main():
             lite_modes = [False] if full_only else ([True] if lite_only else [False, True])
             for lite in lite_modes:
                 build_idx += 1
-                mode = "LITE" if lite else "FULL"
+                mode = "LITE" if lite else "PRO"
                 print(f"\n{'='*50}\n  [{build_idx}/{total_builds}] {variant['name']} ({vid}) [{mode}]\n{'='*50}")
-                # Output filename: nusa-{vid}.apk (FULL) or nusa-{vid}_lite.apk (LITE)
+                # Output filename: nusa-{vid}.apk (PRO) or nusa-{vid}_lite.apk (LITE)
                 apk_name = f"nusa-{vid}_lite.apk" if lite else f"nusa-{vid}.apk"
                 apk_dst = os.path.join(OUTPUT_DIR, apk_name)
                 # Remove stale APK of same name

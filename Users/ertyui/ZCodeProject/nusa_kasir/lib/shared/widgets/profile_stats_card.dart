@@ -393,6 +393,45 @@ class _ProfileStatsCardState extends State<ProfileStatsCard>
   // -- Owner: Laba + hubungi karyawan --
 
   Widget _buildOwnerBack(EmployeeCardData? data) {
+    // v2.2.57+139: error state — kalau fetch gagal, tampilkan pesan, bukan 0
+    if (data == null) {
+      return Padding(
+        padding: EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _backHeader(Icons.insights, 'Ringkasan Hari Ini'),
+            SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                children: [
+                  Icon(Icons.error_outline,
+                      color: Colors.white.withValues(alpha: 0.7), size: 32),
+                  SizedBox(height: 8),
+                  Text('Gagal memuat data',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14)),
+                  SizedBox(height: 4),
+                  Text('Pull untuk refresh atau coba lagi nanti',
+                      style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          fontSize: 11)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final isRed = (data?.selisihLaci ?? 0) < 0;
 
     return Padding(
