@@ -143,7 +143,7 @@ async function handleRestore(ctx: FnContext, params: Params): Promise<Response> 
   const product = String(params.product ?? 'nusa-kasir').trim();
   const nus1Base64 = String(params.nus1_base64 ?? '').trim();
   const generateKey = params.generate_key === true;
-  const mode = String(params.mode ?? 'full');
+  const mode = String(params.mode ?? 'pro');
 
   if (!email && !params.googleUserId) return errorJson('email or googleUserId required', 400);
   if (!nus1Base64) return errorJson('nus1_base64 required', 400);

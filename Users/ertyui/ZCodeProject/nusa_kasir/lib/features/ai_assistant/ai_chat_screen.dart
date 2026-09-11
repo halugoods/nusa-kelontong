@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,6 +6,7 @@ import 'package:nusa_kasir/core/providers.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/ai_service.dart';
 import 'package:nusa_kasir/core/agent/agent_tools.dart';
+import 'package:nusa_kasir/core/agent/agent_action_controller.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:nusa_kasir/data/database/app_database.dart';
 
@@ -44,9 +46,25 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
     "Karyawan siapa aja?",
   ];
 
+  // Agent Mode State
+  bool _agentMode = false;
+  AgentActionEvent? _currentAgentAction;
+  StreamSubscription<AgentActionEvent>? _agentSub;
+
   @override
   void initState() {
     super.initState();
+    _agentMode = AgentActionController.I.isAgentModeEnabled;
+    _agentSub = AgentActionController.I.stream.listen((ev) {
+      if (!mounted) return;
+      setState(() {
+        if (ev.isFinished) {
+          _currentAgentAction = null;
+        } else {
+          _currentAgentAction = ev;
+        }
+      });
+    });
     _drawerCtrl = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
@@ -56,16 +74,74 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
     _loadSessions();
     _messages.add(ChatMessage(
       role: 'assistant',
-      content: 'Halo! Saya Nusa, CS dari NUSA Kasir 👋 Saya bisa bantu jawab soal fitur, harga, atau cara pakai aplikasi. Ada yang bisa saya bantu?',
+      content: 'Halo! Saya Nusa, AI Assistant & Agent NUSA Kasir 👋 Saya bisa bantu analisis keuangan, cari data, hingga bantu operasional langsung (App Use). Ada yang bisa dibantu?',
     ));
   }
 
   @override
   void dispose() {
+    _agentSub?.cancel();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     _drawerCtrl.dispose();
     super.dispose();
+  }
+
+  void _toggleAgentMode(bool val) {
+    if (val) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.warning_amber_rounded, color: Colors.orange),
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('Aktifkan AI Agent?', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          content: const Text(
+            'Mode AI Agent memungkinkan AI melakukan aksi langsung di aplikasi (seperti menambah produk, menyesuaikan stok, dan mendaftarkan pelanggan).\n\nPastikan instruksi yang Anda berikan jelas untuk menghindari perubahan data yang tidak diinginkan.',
+            style: TextStyle(fontSize: 13, height: 1.4),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                setState(() {
+                  _agentMode = true;
+                  AgentActionController.I.setAgentMode(true);
+                });
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: NusaConfig.activePrimary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: const Text('Aktifkan'),
+            ),
+          ],
+        ),
+      );
+    } else {
+      setState(() {
+        _agentMode = false;
+        AgentActionController.I.setAgentMode(false);
+      });
+    }
   }
 
   int get _totalChars => _visibleMessages.fold<int>(0, (s, m) => s + m.content.length);
@@ -395,6 +471,27 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
           onPressed: _toggleDrawer,
         ),
         actions: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Agent',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: _agentMode ? NusaConfig.activePrimary : (isDark ? Colors.white54 : Colors.black54),
+                ),
+              ),
+              Transform.scale(
+                scale: 0.75,
+                child: Switch(
+                  value: _agentMode,
+                  activeColor: NusaConfig.activePrimary,
+                  onChanged: _toggleAgentMode,
+                ),
+              ),
+            ],
+          ),
           IconButton(
             icon: const Icon(Icons.add_comment_outlined),
             tooltip: 'Chat Baru',
@@ -406,6 +503,92 @@ class _AiChatScreenState extends ConsumerState<AiChatScreen>
         children: [
           // ── Chat area (always full-width behind drawer) ──
           _buildChatArea(isDark),
+
+          // ── Live Ghost Action & Virtual Typing Overlay ──
+          if (_currentAgentAction != null)
+            Positioned(
+              top: 12,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xE61E293B) : const Color(0xF2FFFFFF),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: NusaConfig.activePrimary.withValues(alpha: 0.4), width: 1.5),
+                  boxShadow: [
+                    BoxShadow(
+                      color: NusaConfig.activePrimary.withValues(alpha: 0.2),
+                      blurRadius: 16,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: NusaConfig.activePrimary.withValues(alpha: 0.15),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Center(
+                        child: SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                _currentAgentAction!.action,
+                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                              ),
+                              if (_currentAgentAction!.isTyping) ...[
+                                const SizedBox(width: 4),
+                                const Text('▋', style: TextStyle(color: Colors.blue, fontSize: 12)),
+                              ],
+                            ],
+                          ),
+                          if (_currentAgentAction!.typedText != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                '"${_currentAgentAction!.typedText}"',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontStyle: FontStyle.italic,
+                                  color: isDark ? Colors.white70 : Colors.black87,
+                                ),
+                              ),
+                            )
+                          else if (_currentAgentAction!.detail != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                _currentAgentAction!.detail!,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: isDark ? Colors.white60 : Colors.black54,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // ── Session drawer overlay ──
           if (_showSessions) ...[

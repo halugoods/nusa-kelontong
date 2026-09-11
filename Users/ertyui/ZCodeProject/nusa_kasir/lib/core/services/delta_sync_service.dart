@@ -1648,32 +1648,97 @@ class DeltaSyncService {
     );
   }
 
-  /// Download product image from cloud + update DB imagePath ke lokal path.
-  /// Delta data image_path berisi path lokal device asal — tidak ada di
-  /// device ini. Kita download dari cloud dan update DB supaya gambar muncul.
-  Future<void> _hydrateProductImage(String productIdStr, String localPath) async {
+  /// Set tracking id yang sedang aktif di-hydrate agar tidak dobel download.
+  final Set<int> _activeHydratingProductIds = {};
+
+  /// v2.2.57+140: On-demand download single product image dengan real-time progress.
+  Future<String?> hydrateSingleProduct(int productId, String localPath) async {
+    if (_db == null) return null;
+    if (_activeHydratingProductIds.contains(productId)) return null;
+    _activeHydratingProductIds.add(productId);
+
+    final uid = _uid ?? await SecureStore.resolveCanonicalUid();
+    if (uid == null) {
+      _activeHydratingProductIds.remove(productId);
+      return null;
+    }
+    final svc = ImageStorageService(uid);
+    final filename = localPath.split('/').last;
+    if (filename.isEmpty) {
+      _activeHydratingProductIds.remove(productId);
+      return null;
+    }
+
+    // Emit event start
+    if (!_hydrationController.isClosed) {
+      _hydrationController.add(ImageHydrationEvent(
+        productId: productId,
+        progress: 0.05,
+      ));
+    }
+
+    var tickProgress = 0.05;
+    final ticker = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) {
+        tickProgress = (tickProgress + 0.05).clamp(0.05, 0.92);
+        if (!_hydrationController.isClosed) {
+          _hydrationController.add(ImageHydrationEvent(
+            productId: productId,
+            progress: tickProgress,
+          ));
+        }
+      },
+    );
+
     try {
-      final uid = _uid;
-      if (uid == null) return;
-      final filename = localPath.split('/').last;
-      final pid = int.tryParse(productIdStr);
-      if (pid == null) return;
-      final svc = ImageStorageService(uid);
-      // Try downloadOriginal first (matches DB imagePath naming: product_{id}_{ts}.jpg)
       var result = await svc.downloadOriginal('products', filename);
       if (result == null) {
-        // Fallback: try with productId prefix (legacy naming)
         result = await svc.downloadImage('products', filename);
       }
+      ticker.cancel();
+      _activeHydratingProductIds.remove(productId);
+
       if (result != null) {
-        // Update DB: imagePath → lokal path yang baru di-download
-        await (_db!.update(_db!.products)
-              ..where((t) => t.id.equals(pid)))
+        await (_db!.update(_db!.products)..where((t) => t.id.equals(productId)))
             .write(ProductsCompanion(imagePath: Value(result)));
-        debugPrint('[DeltaSync] image hydrated: $filename → $result');
+        debugPrint('[DeltaSync] single image hydrated: $filename → $result');
+
+        if (!_hydrationController.isClosed) {
+          _hydrationController.add(ImageHydrationEvent(
+            productId: productId,
+            progress: 1.0,
+            localPath: result,
+          ));
+        }
+        return result;
+      } else {
+        if (!_hydrationController.isClosed) {
+          _hydrationController.add(ImageHydrationEvent(
+            productId: productId,
+            progress: 1.0,
+          ));
+        }
+        return null;
       }
     } catch (e) {
-      debugPrint('[DeltaSync] image hydrate failed: $e');
+      ticker.cancel();
+      _activeHydratingProductIds.remove(productId);
+      if (!_hydrationController.isClosed) {
+        _hydrationController.add(ImageHydrationEvent(
+          productId: productId,
+          progress: 1.0,
+        ));
+      }
+      return null;
+    }
+  }
+
+  /// Download product image from cloud + update DB imagePath ke lokal path.
+  Future<void> _hydrateProductImage(String productIdStr, String localPath) async {
+    final pid = int.tryParse(productIdStr);
+    if (pid != null) {
+      await hydrateSingleProduct(pid, localPath);
     }
   }
 

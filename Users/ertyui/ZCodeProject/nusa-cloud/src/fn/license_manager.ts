@@ -126,8 +126,8 @@ export async function handleGenerate(ctx: FnContext, params: Params): Promise<Re
   const isTrial = params.is_trial === true;
   const tier = (params.tier as string | undefined) ?? (isTrial ? 'trial' : 'lifetime');
   const product = (params.product as string | undefined) ?? 'nusa-kasir';
-  const mode = (params.mode as string | undefined) ?? 'full'; // full | lite
-  if (mode !== 'full' && mode !== 'lite') return json({ error: 'mode must be full or lite' }, 400);
+  const mode = (params.mode as string | undefined) ?? 'pro'; // pro | lite (accept 'full' as alias for backward compat)
+  if (mode !== 'pro' && mode !== 'full' && mode !== 'lite') return json({ error: 'mode must be pro or lite' }, 400);
 
   const keys: { key: string; serial: string }[] = [];
 
@@ -216,7 +216,7 @@ async function sendActivationEmail(
   keys: string[],
   tier = 'lifetime',
   product = 'nusa-kasir',
-  mode = 'full'
+  mode = 'pro'
 ): Promise<void> {
   const resendApiKey = env.RESEND_API_KEY ?? '';
   const resendFromEmail = env.RESEND_FROM_EMAIL ?? 'nusa@halugoods.com';
@@ -746,8 +746,8 @@ export async function handleActivateLite(ctx: FnContext, params: Params): Promis
     return errorJson('email tidak cocok dengan lisensi', 403);
   }
 
-  // 4. Tentukan mode — kalau belum ada, default 'full' (backward compat)
-  const mode = lic.mode ?? 'full';
+  // 4. Tentukan mode — kalau belum ada, default 'pro' (backward compat: treat legacy 'full' as 'pro')
+  const mode = lic.mode === 'full' ? 'pro' : (lic.mode ?? 'pro');
 
   // 5. Cek expired
   let expiresAt = lic.expires_at as string | null;

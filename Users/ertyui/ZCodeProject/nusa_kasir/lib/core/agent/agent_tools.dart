@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
+import 'package:nusa_kasir/core/agent/agent_action_controller.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/data/repositories/product_repository.dart';
 import 'package:nusa_kasir/data/repositories/customer_repository.dart';
@@ -20,7 +21,8 @@ import 'package:nusa_kasir/data/repositories/print_order_repository.dart';
 class AgentTool {
   final String name;
   final String description;
-  final Map<String, dynamic> parameters; // JSON Schema for Groq tool calling
+  final Map<String, dynamic> parameters; // JSON Schema for Groq/OpenAI tool calling
+  final bool isDestructive;
 
   /// Execute the tool with the given arguments. Returns a JSON string result.
   final Future<String> Function(AppDatabase db, Map<String, dynamic> args) execute;
@@ -30,6 +32,7 @@ class AgentTool {
     required this.description,
     required this.parameters,
     required this.execute,
+    this.isDestructive = false,
   });
 
   Map<String, dynamic> toOpenAiTool() => {
@@ -150,6 +153,56 @@ class AgentToolRegistry {
       description: 'Get all suppliers with name and phone.',
       parameters: {'type': 'object', 'properties': {}},
       execute: _getSuppliers,
+    ),
+
+    // ── AI AGENT MUTATION & ACTION TOOLS (App Use) ──
+    AgentTool(
+      name: 'create_product',
+      description: 'Tambah master produk baru secara langsung ke database kasir.',
+      isDestructive: true,
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'name': {'type': 'string', 'description': 'Nama produk'},
+          'sell_price': {'type': 'number', 'description': 'Harga jual (Rp)'},
+          'buy_price': {'type': 'number', 'description': 'Harga modal / beli (Rp, default 0)'},
+          'stock': {'type': 'number', 'description': 'Jumlah stok awal (default 0)'},
+          'category': {'type': 'string', 'description': 'Kategori produk'},
+          'barcode': {'type': 'string', 'description': 'Barcode / SKU (opsional)'},
+        },
+        'required': ['name', 'sell_price']
+      },
+      execute: _createProduct,
+    ),
+    AgentTool(
+      name: 'update_stock',
+      description: 'Sesuaikan atau tambah/kurang stok barang produk tertentu.',
+      isDestructive: true,
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'product_name': {'type': 'string', 'description': 'Nama produk yang akan diubah stoknya'},
+          'delta': {'type': 'number', 'description': 'Perubahan stok (+ untuk menambah, - untuk mengurangi)'},
+          'reason': {'type': 'string', 'description': 'Alasan penyesuaian (opsional)'},
+        },
+        'required': ['product_name', 'delta']
+      },
+      execute: _updateStock,
+    ),
+    AgentTool(
+      name: 'create_customer',
+      description: 'Daftarkan data pelanggan / member baru ke toko.',
+      isDestructive: true,
+      parameters: {
+        'type': 'object',
+        'properties': {
+          'name': {'type': 'string', 'description': 'Nama pelanggan'},
+          'phone': {'type': 'string', 'description': 'Nomor WhatsApp / telepon'},
+          'address': {'type': 'string', 'description': 'Alamat pelanggan (opsional)'},
+        },
+        'required': ['name']
+      },
+      execute: _createCustomer,
     ),
   ];
 
@@ -522,5 +575,100 @@ class AgentToolRegistry {
       'status': o.status, 'pages': o.pages, 'total': o.total,
     }).toList();
     return jsonEncode({'total': orders.length, 'orders': list});
+  }
+
+  // ── Mutating Tool Implementations (Live Action Simulation) ──
+
+  static Future<String> _createProduct(AppDatabase db, Map<String, dynamic> args) async {
+    final name = (args['name'] as String?)?.trim() ?? '';
+    final sellPrice = (args['sell_price'] as num?)?.toInt() ?? 0;
+    final buyPrice = (args['buy_price'] as num?)?.toInt() ?? 0;
+    final stock = (args['stock'] as num?)?.toInt() ?? 0;
+    final category = (args['category'] as String?)?.trim() ?? 'Umum';
+    final barcode = args['barcode'] as String?;
+
+    if (name.isEmpty || sellPrice <= 0) {
+      return jsonEncode({'status': 'error', 'message': 'Nama dan harga jual wajib diisi'});
+    }
+
+    // Visual typing simulation
+    await AgentActionController.I.simulateTyping(targetField: 'Nama Produk', textToType: name);
+    await AgentActionController.I.simulateTyping(targetField: 'Harga Jual', textToType: '$sellPrice');
+
+    final repo = ProductRepository(db);
+    final id = await repo.addProduct(
+      name: name,
+      category: category,
+      buyPrice: buyPrice,
+      sellPrice: sellPrice,
+      stock: stock,
+      minStock: 5,
+      barcode: barcode,
+    );
+
+    AgentActionController.I.finishAction('Produk "$name" berhasil ditambahkan');
+    return jsonEncode({
+      'status': 'success',
+      'id': id,
+      'message': 'Produk $name (Rp $sellPrice) berhasil ditambahkan dengan stok $stock'
+    });
+  }
+
+  static Future<String> _updateStock(AppDatabase db, Map<String, dynamic> args) async {
+    final productName = (args['product_name'] as String?)?.trim() ?? '';
+    final delta = (args['delta'] as num?)?.toInt() ?? 0;
+    final reason = args['reason'] as String? ?? 'Penyesuaian AI Agent';
+
+    if (productName.isEmpty || delta == 0) {
+      return jsonEncode({'status': 'error', 'message': 'Nama produk dan jumlah perubahan wajib diisi'});
+    }
+
+    final repo = ProductRepository(db);
+    final products = await repo.getProducts();
+    final p = products.where((item) => item.name.toLowerCase().contains(productName.toLowerCase())).firstOrNull;
+
+    if (p == null) {
+      return jsonEncode({'status': 'error', 'message': 'Produk "$productName" tidak ditemukan'});
+    }
+
+    // Visual pointer feedback
+    AgentActionController.I.emitAction('Menyesuaikan Stok', detail: '${p.name} (${delta > 0 ? "+$delta" : "$delta"})');
+    await Future.delayed(const Duration(milliseconds: 600));
+
+    await repo.adjustStock(p.id, delta);
+    AgentActionController.I.finishAction('Stok ${p.name} diperbarui');
+
+    return jsonEncode({
+      'status': 'success',
+      'product': p.name,
+      'old_stock': p.stock,
+      'new_stock': p.stock + delta,
+      'reason': reason,
+    });
+  }
+
+  static Future<String> _createCustomer(AppDatabase db, Map<String, dynamic> args) async {
+    final name = (args['name'] as String?)?.trim() ?? '';
+    final phone = (args['phone'] as String?)?.trim();
+    final address = (args['address'] as String?)?.trim();
+
+    if (name.isEmpty) {
+      return jsonEncode({'status': 'error', 'message': 'Nama pelanggan wajib diisi'});
+    }
+
+    await AgentActionController.I.simulateTyping(targetField: 'Nama Pelanggan', textToType: name);
+    if (phone != null && phone.isNotEmpty) {
+      await AgentActionController.I.simulateTyping(targetField: 'WhatsApp / No HP', textToType: phone);
+    }
+
+    final repo = CustomerRepository(db);
+    final id = await repo.addCustomer(name: name, phone: phone, address: address);
+    AgentActionController.I.finishAction('Pelanggan "$name" berhasil terdaftar');
+
+    return jsonEncode({
+      'status': 'success',
+      'id': id,
+      'message': 'Pelanggan $name ($phone) berhasil disimpan'
+    });
   }
 }
