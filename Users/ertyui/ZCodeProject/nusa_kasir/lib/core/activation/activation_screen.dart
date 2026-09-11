@@ -13,6 +13,8 @@ import 'package:nusa_kasir/core/auth/employee_session.dart';
 import 'package:nusa_kasir/core/activation/activation_key.dart';
 import 'package:nusa_kasir/core/activation/activation_public_key.dart';
 import 'package:nusa_kasir/core/activation/activation_repository.dart';
+import 'package:nusa_kasir/core/providers/restore_progress_provider.dart';
+import 'package:nusa_kasir/shared/widgets/restore_progress_dialog.dart';
 import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/data/repositories/attendance_repository.dart';
@@ -540,7 +542,15 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
     } catch (_) {}
     ref.invalidate(databaseProvider);
 
-    final ok = await repo.restoreDirect();
+    // v2.2.57+138: tampilkan dialog progress restore (fase download → unpack →
+    // images X/N). Provider di-update dari callback restoreDirect + hydrate.
+    final progress = ref.read(restoreProgressProvider.notifier);
+    progress.start();
+    showRestoreProgressDialog(context);
+
+    final ok = await repo.restoreDirect(onPhase: (phase) {
+      if (phase == 'unpack') progress.phase(RestorePhase.unpack);
+    });
     if (ok && mounted) {
       TopToast.success(context, 'Data berhasil dipulihkan');
       // v2.2.57+133: pulihkan foto produk/karyawan dari bucket SEKARANG —
@@ -548,8 +558,13 @@ class _ActivationScreenState extends ConsumerState<ActivationScreen> {
       // dan arsip backup sudah tidak mengemas gambar (+130). Dulu relink
       // cuma jalan di main() startup → foto hilang sampai restart kedua.
       try {
-        await DeltaSyncService.I.hydrateAllImages();
+        progress.phase(RestorePhase.images);
+        await DeltaSyncService.I.hydrateAllImages(onProgress: (done, total) {
+          progress.updateFiles(done, total);
+        });
       } catch (_) {}
+      if (context.mounted) Navigator.of(context).pop(); // tutup dialog
+      progress.done();
       if (context.canPop()) {
         Navigator.of(context).popUntil((r) => r.isFirst);
       }

@@ -547,17 +547,19 @@ class ActivationRepository {
   /// Restore berlaku IMMEDIATE — caller harus menutup koneksi drift dulu
   /// (lihat RestoreBackupFlow / _autoRestoreIfNeeded) supaya swap aman.
   /// Returns true on success.
-  Future<bool> restoreDirect() async {
+  Future<bool> restoreDirect({void Function(String phase)? onPhase}) async {
     await _ensureAnonAuth();
     final uid = await _googleUserId();
     if (uid == null) return false;
     final path = '$uid/${NusaConfig.productId}/backup.sqlite.enc';
     try {
+      onPhase?.call('download');
       final bytes = await CloudGateway.shared.storageDownload('nusa-backups', path);
       if (bytes == null || bytes.isEmpty) return false;
       // v2.2.57+130: decrypt+unpack SEKALI di background isolate (arsip bisa
       // puluhan MB — sebelumnya decrypt di main isolate lalu unpack lagi).
       // _backupBelongsToVariant menerima plaintext sqlite langsung dari map.
+      onPhase?.call('unpack');
       final packedFiles = await decryptAndUnpackInIsolate(bytes, uid);
       final decryptedSqlite = packedFiles['nusa_kasir.sqlite'];
       if (decryptedSqlite == null) return false;
@@ -667,15 +669,17 @@ class ActivationRepository {
   /// koneksi drift yang selalu terbuka). Untuk jalur user-facing (activation /
   /// RestoreBackupFlow) gunakan restoreDirect() (live swap setelah drift
   /// ditutup).
-  Future<bool> restoreFromCloud() async {
+  Future<bool> restoreFromCloud({void Function(String phase)? onPhase}) async {
     await _ensureAnonAuth();
     final uid = await _googleUserId();
     if (uid == null) return false;
     final path = '$uid/${NusaConfig.productId}/backup.sqlite.enc';
     try {
+      onPhase?.call('download');
       final bytes = await CloudGateway.shared.storageDownload('nusa-backups', path);
       if (bytes == null || bytes.isEmpty) return false;
       // v2.2.57+130: decrypt+unpack di background isolate; ambil sqlite saja.
+      onPhase?.call('unpack');
       final files = await decryptAndUnpackInIsolate(bytes, uid);
       final decryptedSqlite = files['nusa_kasir.sqlite'];
       if (decryptedSqlite == null) return false;

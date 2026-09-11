@@ -170,7 +170,7 @@ class ReportRepository {
     for (final tx in normalTx) {
       final items = _parseItems(tx.items);
       for (final it in items) {
-        final pid = it['productId'] as int?;
+        final pid = (it['productId'] as num?)?.toInt();
         if (pid != null && pid >= 0) productIds.add(pid);
       }
     }
@@ -209,8 +209,8 @@ class ReportRepository {
     for (final tx in normalTx) {
       final items = _parseItems(tx.items);
       for (final it in items) {
-        final pid = it['productId'] as int?;
-        final qty = it['qty'] as int? ?? 0;
+        final pid = (it['productId'] as num?)?.toInt();
+        final qty = (it['qty'] as num?)?.toInt() ?? 0;
         // v2.2.43 (satuan dinamis): qty tercatat dalam satuan jual; konversi
         // ke satuan dasar untuk HPP (stok & modal selalu satuan dasar).
         final perBase = (it['unitQtyPerBase'] as num?)?.toDouble() ?? 1;

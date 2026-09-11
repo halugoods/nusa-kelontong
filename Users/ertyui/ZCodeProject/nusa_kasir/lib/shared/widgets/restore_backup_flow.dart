@@ -4,9 +4,12 @@ import 'package:go_router/go_router.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/activation/activation_repository.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/providers/restore_progress_provider.dart';
+import 'package:nusa_kasir/core/services/delta_sync_service.dart';
 import 'package:nusa_kasir/core/utils/secure_storage.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/shared/widgets/top_toast.dart';
+import 'package:nusa_kasir/shared/widgets/restore_progress_dialog.dart';
 import 'package:nusa_kasir/data/repositories/settings_repository.dart';
 import 'package:nusa_kasir/data/repositories/attendance_repository.dart';
 import 'package:drift/drift.dart' hide Column;
@@ -168,9 +171,28 @@ class RestoreBackupFlow {
     //    restart) — aman karena drift sudah ditutup di atas. Data langsung
     //    berlaku: login berikutnya membaca DB hasil restore, produk langsung
     //    tampil, PIN sesuai.
-    final ok = await repo.restoreDirect();
+    // v2.2.57+138: tampilkan dialog progress restore.
+    final progress = ref.read(restoreProgressProvider.notifier);
+    progress.start();
+    showRestoreProgressDialog(context);
+
+    final ok = await repo.restoreDirect(onPhase: (phase) {
+      if (phase == 'unpack') progress.phase(RestorePhase.unpack);
+    });
     if (ok && context.mounted) {
       TopToast.success(context, 'Data berhasil dipulihkan');
+      // v2.2.57+133: pulihkan foto produk/karyawan dari bucket SEKARANG —
+      // restore membawa path absolut device asal (file tidak ada di sini)
+      // dan arsip backup sudah tidak mengemas gambar (+130). Dulu relink
+      // cuma jalan di main() startup → foto hilang sampai restart kedua.
+      try {
+        progress.phase(RestorePhase.images);
+        await DeltaSyncService.I.hydrateAllImages(onProgress: (done, total) {
+          progress.updateFiles(done, total);
+        });
+      } catch (_) {}
+      if (context.mounted) Navigator.of(context).pop(); // tutup dialog
+      progress.done();
       // v2.2.57+131: tandai lastCloudSeen = now supaya autosync tidak
       // menimpa DB yang baru di-restore di launch berikutnya.
       await SecureStore.setLastCloudSeen(DateTime.now());
@@ -186,6 +208,7 @@ class RestoreBackupFlow {
       return true;
     }
     if (context.mounted) {
+      Navigator.of(context).pop(); // tutup dialog saat gagal
       TopToast.error(context, 'Gagal memulihkan data dari cloud');
     }
     return false;

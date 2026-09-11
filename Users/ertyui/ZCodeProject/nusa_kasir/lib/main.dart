@@ -441,7 +441,7 @@ Future<void> _uploadBase64ImagesToR2() async {
 /// selalu diisi nama asli; prefix `{productId}_` hanya penamaan cache lokal
 /// lama) lalu tulis ke documents dir + perbarui path di DB. Idempoten: yang
 /// filenya sudah ada di-skip.
-Future<void> _relinkImagesFromCloud() async {
+Future<void> _relinkImagesFromCloud({void Function(int done, int total)? onProgress}) async {
   try {
     final uid = await SecureStore.resolveCanonicalUid();
     if (uid == null) return;
@@ -451,47 +451,55 @@ Future<void> _relinkImagesFromCloud() async {
     var relinkedProducts = 0;
     var relinkedEmployees = 0;
     try {
-      // ── Produk ──
+      // Pass 1: kumpulkan kandidat
+      final productCandidates = <_RelinkTarget>[];
       final rows = await db.select(db.products).get();
       for (final pr in rows) {
         final path = pr.imagePath;
-        final hasFile = path != null &&
-            path.isNotEmpty &&
-            await File(path).exists();
+        final hasFile = path != null && path.isNotEmpty && await File(path).exists();
         if (hasFile) continue;
         final b64 = pr.imageBase64;
-        if (b64 != null && b64.isNotEmpty) continue; // hydrate yang urus
+        if (b64 != null && b64.isNotEmpty) continue;
         final name = p.basename(path ?? '');
-        // v2.2.57+133: terima juga crop_* (hasil crop di product form) —
-        // dulu hanya product_* → foto yang di-crop tidak pernah pulih.
-        if (name.isEmpty ||
-            !(name.startsWith('product_') || name.startsWith('crop_'))) {
-          continue;
-        }
-        final restored = await svc.downloadOriginal('products', name);
-        if (restored == null) continue;
-        await (db.update(db.products)..where((t) => t.id.equals(pr.id)))
-            .write(ProductsCompanion(imagePath: Value(restored)));
-        relinkedProducts++;
+        if (name.isEmpty || !(name.startsWith('product_') || name.startsWith('crop_'))) continue;
+        productCandidates.add(_RelinkTarget(pr.id, name));
       }
-
-      // ── Karyawan ──
+      final empCandidates = <_RelinkTarget>[];
       final emps = await db.select(db.employees).get();
       for (final em in emps) {
         final path = em.photoPath;
-        final hasFile = path != null &&
-            path.isNotEmpty &&
-            await File(path).exists();
+        final hasFile = path != null && path.isNotEmpty && await File(path).exists();
         if (hasFile) continue;
         final b64 = em.photoBase64;
-        if (b64 != null && b64.isNotEmpty) continue; // hydrate yang urus
+        if (b64 != null && b64.isNotEmpty) continue;
         final name = p.basename(path ?? '');
         if (name.isEmpty || !name.startsWith('photo_')) continue;
-        final restored = await svc.downloadOriginal('employees', name);
-        if (restored == null) continue;
-        await (db.update(db.employees)..where((t) => t.id.equals(em.id)))
-            .write(EmployeesCompanion(photoPath: Value(restored)));
-        relinkedEmployees++;
+        empCandidates.add(_RelinkTarget(em.id, name));
+      }
+      final total = productCandidates.length + empCandidates.length;
+      var done = 0;
+      onProgress?.call(done, total);
+
+      // Pass 2: download + update DB
+      for (final t in productCandidates) {
+        final restored = await svc.downloadOriginal('products', t.name);
+        if (restored != null) {
+          await (db.update(db.products)..where((x) => x.id.equals(t.id)))
+              .write(ProductsCompanion(imagePath: Value(restored)));
+          relinkedProducts++;
+        }
+        done++;
+        onProgress?.call(done, total);
+      }
+      for (final t in empCandidates) {
+        final restored = await svc.downloadOriginal('employees', t.name);
+        if (restored != null) {
+          await (db.update(db.employees)..where((x) => x.id.equals(t.id)))
+              .write(EmployeesCompanion(photoPath: Value(restored)));
+          relinkedEmployees++;
+        }
+        done++;
+        onProgress?.call(done, total);
       }
     } finally {
       await db.close();
@@ -503,6 +511,12 @@ Future<void> _relinkImagesFromCloud() async {
   } catch (e) {
     debugPrint('[Relink] error: $e');
   }
+}
+
+class _RelinkTarget {
+  _RelinkTarget(this.id, this.name);
+  final int id;
+  final String name;
 }
 
 void main() async {

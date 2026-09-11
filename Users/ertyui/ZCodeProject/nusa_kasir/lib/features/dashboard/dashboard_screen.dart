@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -155,6 +156,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     {'id': 'print_order', 'label': 'Order Cetak', 'icon': 'print_order'},
   ];
 
+  StreamSubscription? _deltaSub;
+
   @override
   void initState() {
     super.initState();
@@ -163,10 +166,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     // mengubah DB — dulu dashboard cuma reload saat init/pull-route, trx
     // kasir dari device lain tak terlihat sampai reopen.
     try {
-      DeltaSyncService.I.stream.listen((_) {
+      _deltaSub = DeltaSyncService.I.stream.listen((_) {
         if (mounted) _load();
       });
     } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _deltaSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _init() async {
@@ -1179,9 +1188,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   }
 
   /// Pre-fetch flip card data for the profile card back side.
+  /// v2.2.57+138: employeeId boleh null (tanpa sesi karyawan, mis. owner
+  /// default / restore). Statistik global tetap dihitung; bagian yang butuh
+  /// employeeId (laci/shift/hadir) dilewati — sebelumnya fungsi return awal
+  /// saat null → card flip 0 semua.
   Future<void> _fetchCardData(int? employeeId) async {
-    if (employeeId == null) return;
-    _cardEmployeeId = employeeId;
     try {
       final db = ref.read(databaseProvider);
       final reportRepo = ReportRepository(db);
@@ -1209,26 +1220,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       );
       final laba = (pl['labaBersih'] as int?) ?? 0;
 
-      // Cash drawer — from today's attendance record
-      final todayAtt = await attRepo.getToday(employeeId);
-      final modalAwal = todayAtt?.pettyCash ?? 0;
-      final totalLaci = todayAtt?.finalCash ?? modalAwal;
-      final selisihLaci = totalLaci - modalAwal - penjualan;
+      // Cash drawer + shift — hanya saat ada employeeId
+      int modalAwal = 0;
+      int totalLaci = 0;
       String? shiftHours;
-      // Shift hours from today's attendance
-      if (todayAtt?.checkIn != null) {
-        final parts = todayAtt!.checkIn!.split(':');
-        if (parts.length >= 2) {
-          final h = int.tryParse(parts[0]) ?? 0;
-          final m = int.tryParse(parts[1]) ?? 0;
-          final diff = now.difference(
-            DateTime(now.year, now.month, now.day, h, m),
-          );
-          if (diff.inMinutes > 0) {
-            shiftHours = '${diff.inHours}j ${diff.inMinutes.remainder(60)}m';
+      if (employeeId != null) {
+        _cardEmployeeId = employeeId;
+        final todayAtt = await attRepo.getToday(employeeId);
+        modalAwal = todayAtt?.pettyCash ?? 0;
+        totalLaci = todayAtt?.finalCash ?? modalAwal;
+        if (todayAtt?.checkIn != null) {
+          final parts = todayAtt!.checkIn!.split(':');
+          if (parts.length >= 2) {
+            final h = int.tryParse(parts[0]) ?? 0;
+            final m = int.tryParse(parts[1]) ?? 0;
+            final diff = now.difference(
+              DateTime(now.year, now.month, now.day, h, m),
+            );
+            if (diff.inMinutes > 0) {
+              shiftHours = '${diff.inHours}j ${diff.inMinutes.remainder(60)}m';
+            }
           }
         }
       }
+      final selisihLaci = totalLaci - modalAwal - penjualan;
 
       // Monthly data
       final monthStart = DateTime(now.year, now.month, 1);
@@ -1240,15 +1255,18 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
       final omzet = monthSum['omzet'] as int;
       final transaksiBulan = monthSum['count'] as int;
 
-      // Attendance — count records this month
-      final history = await attRepo.history(employeeId: employeeId);
-      final hadirDays = history
-          .where(
-            (a) =>
-                a.date.isAfter(monthStart.subtract(const Duration(days: 1))) &&
-                a.checkIn != null,
-          )
-          .length;
+      // Attendance — hanya saat ada employeeId
+      int hadirDays = 0;
+      if (employeeId != null) {
+        final history = await attRepo.history(employeeId: employeeId);
+        hadirDays = history
+            .where(
+              (a) =>
+                  a.date.isAfter(monthStart.subtract(const Duration(days: 1))) &&
+                  a.checkIn != null,
+            )
+            .length;
+      }
       final totalDays = now.day;
 
       // Pending online orders
@@ -1273,7 +1291,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
           );
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Dashboard] fetchCardData error: $e');
+    }
   }
 
   // ── Branch Picker ──────────────────────────────────────────────

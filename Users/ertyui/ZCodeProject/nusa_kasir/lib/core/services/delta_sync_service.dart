@@ -33,6 +33,12 @@ class DeltaEvent {
 ///
 /// v2.2.57+131 (Milestone D): app-side delta sync. Reuses the existing
 /// SyncQueue table (dormant since early versions) as the local outbox.
+class _HydrateTarget {
+  _HydrateTarget(this.id, this.name);
+  final int id;
+  final String name;
+}
+
 class DeltaSyncService {
   DeltaSyncService._();
   static final DeltaSyncService I = DeltaSyncService._();
@@ -1652,52 +1658,64 @@ class DeltaSyncService {
   /// Dipanggil setelah restore sukses (aktivasi / pending-restore) — dulu
   /// relink hanya jalan di main() startup, jadi restore via layar aktivasi
   /// tidak pernah memulihkan foto sampai restart kedua.
-  Future<void> hydrateAllImages() async {
+  /// v2.2.57+138: tambah parameter opsional onProgress(done, total) untuk
+  /// update UI progress dialog "Mengunduh gambar X/N".
+  Future<void> hydrateAllImages({void Function(int done, int total)? onProgress}) async {
     if (_db == null) return;
     final uid = _uid ?? await SecureStore.resolveCanonicalUid();
     if (uid == null) return;
     final svc = ImageStorageService(uid);
     try {
-      // ── Produk ──
+      // Pass 1: kumpulkan kandidat (file tak ada, base64 kosong, prefix valid)
+      final productCandidates = <_HydrateTarget>[];
       final rows = await _db!.select(_db!.products).get();
       for (final pr in rows) {
         final path = pr.imagePath;
-        final hasFile = path != null &&
-            path.isNotEmpty &&
-            await File(path).exists();
+        final hasFile = path != null && path.isNotEmpty && await File(path).exists();
         if (hasFile) continue;
         final b64 = pr.imageBase64;
-        if (b64 != null && b64.isNotEmpty) continue; // hydrate base64 yang urus
+        if (b64 != null && b64.isNotEmpty) continue;
         final name = path?.split('/').last ?? '';
         if (name.isEmpty) continue;
-        // Gate longgar: product_/photo_/crop_ (hasil crop dari form) —
-        // dulu cuma product_/photo_ → foto crop_ tidak pernah pulih.
-        if (!(name.startsWith('product_') || name.startsWith('crop_'))) {
-          continue;
-        }
-        final restored = await svc.downloadOriginal('products', name);
-        if (restored == null) continue;
-        await (_db!.update(_db!.products)..where((t) => t.id.equals(pr.id)))
-            .write(ProductsCompanion(imagePath: Value(restored)));
-        debugPrint('[DeltaSync] hydrateAllImages: product ${pr.id} → $restored');
+        if (!(name.startsWith('product_') || name.startsWith('crop_'))) continue;
+        productCandidates.add(_HydrateTarget(pr.id, name));
       }
-      // ── Karyawan ──
+      final empCandidates = <_HydrateTarget>[];
       final emps = await _db!.select(_db!.employees).get();
       for (final em in emps) {
         final path = em.photoPath;
-        final hasFile = path != null &&
-            path.isNotEmpty &&
-            await File(path).exists();
+        final hasFile = path != null && path.isNotEmpty && await File(path).exists();
         if (hasFile) continue;
         final b64 = em.photoBase64;
         if (b64 != null && b64.isNotEmpty) continue;
         final name = path?.split('/').last ?? '';
         if (name.isEmpty || !name.startsWith('photo_')) continue;
-        final restored = await svc.downloadOriginal('employees', name);
-        if (restored == null) continue;
-        await (_db!.update(_db!.employees)..where((t) => t.id.equals(em.id)))
-            .write(EmployeesCompanion(photoPath: Value(restored)));
-        debugPrint('[DeltaSync] hydrateAllImages: employee ${em.id} → $restored');
+        empCandidates.add(_HydrateTarget(em.id, name));
+      }
+      final total = productCandidates.length + empCandidates.length;
+      var done = 0;
+      onProgress?.call(done, total);
+
+      // Pass 2: download per file + update DB
+      for (final t in productCandidates) {
+        final restored = await svc.downloadOriginal('products', t.name);
+        if (restored != null) {
+          await (_db!.update(_db!.products)..where((p) => p.id.equals(t.id)))
+              .write(ProductsCompanion(imagePath: Value(restored)));
+          debugPrint('[DeltaSync] hydrateAllImages: product ${t.id} → $restored');
+        }
+        done++;
+        onProgress?.call(done, total);
+      }
+      for (final t in empCandidates) {
+        final restored = await svc.downloadOriginal('employees', t.name);
+        if (restored != null) {
+          await (_db!.update(_db!.employees)..where((e) => e.id.equals(t.id)))
+              .write(EmployeesCompanion(photoPath: Value(restored)));
+          debugPrint('[DeltaSync] hydrateAllImages: employee ${t.id} → $restored');
+        }
+        done++;
+        onProgress?.call(done, total);
       }
     } catch (e) {
       debugPrint('[DeltaSync] hydrateAllImages error: $e');

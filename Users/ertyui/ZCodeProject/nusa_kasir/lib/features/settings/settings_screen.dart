@@ -9,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:restart_app/restart_app.dart';
 import 'package:nusa_kasir/core/providers.dart';
+import 'package:nusa_kasir/core/providers/restore_progress_provider.dart';
+import 'package:nusa_kasir/shared/widgets/restore_progress_dialog.dart';
 import 'package:nusa_kasir/data/database/app_database.dart';
 import 'package:nusa_kasir/core/config/nusa_config.dart';
 import 'package:nusa_kasir/core/services/google_auth_service.dart';
@@ -948,11 +950,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _doDownload() async {
-    setState(() => _syncing = true);
+    // v2.2.57+138: ganti spinner kecil di tombol dengan dialog progress.
+    // restoreFromCloud() hanya download + stage .pending — gambar menyusul
+    // dihidrasi otomatis oleh main() _applyPendingRestore() saat restart,
+    // beri tahu user lewat label di dialog.
+    final progress = ref.read(restoreProgressProvider.notifier);
+    progress.start();
+    showRestoreProgressDialog(context, showImages: false);
+
     final repo = ref.read(activationRepoProvider);
-    final ok = await repo.restoreFromCloud();
+    final ok = await repo.restoreFromCloud(onPhase: (phase) {
+      if (phase == 'unpack') progress.phase(RestorePhase.unpack);
+    });
     if (mounted) {
-      setState(() => _syncing = false);
+      if (context.mounted) Navigator.of(context).pop(); // tutup dialog
+      progress.done();
       if (ok) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
