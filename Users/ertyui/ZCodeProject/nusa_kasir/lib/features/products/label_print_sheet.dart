@@ -1394,6 +1394,9 @@ class _LabelPrintSheetState extends ConsumerState<LabelPrintSheet> {
                 ),
                 NusaProductImage(
                   imagePath: p.imagePath,
+                  imageBase64: p.imageBase64,
+                  productId: p.id,
+                  tintColor: NusaConfig.activePrimary,
                   width: 34,
                   height: 34,
                   borderRadius: BorderRadius.circular(6),

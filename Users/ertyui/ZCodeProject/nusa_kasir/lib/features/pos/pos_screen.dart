@@ -3285,6 +3285,8 @@ class _ProductCard extends StatelessWidget {
                       NusaProductImage(
                         imagePath: product.imagePath,
                         imageBase64: product.imageBase64,
+                        productId: product.id,
+                        tintColor: NusaConfig.activePrimary,
                         width: double.infinity,
                         height: double.infinity,
                         fit: BoxFit.cover,
@@ -4070,6 +4072,8 @@ class _ProductListCard extends StatelessWidget {
                     child: NusaProductImage(
                       imagePath: product.imagePath,
                       imageBase64: product.imageBase64,
+                      productId: product.id,
+                      tintColor: NusaConfig.activePrimary,
                       width: 56,
                       height: 56,
                       fit: BoxFit.cover,

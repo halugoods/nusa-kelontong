@@ -39,6 +39,23 @@ class _HydrateTarget {
   final String name;
 }
 
+/// v2.2.57+140: per-image hydration progress event.
+/// `progress` 0.0..1.0 = download byte ratio saat ini.
+/// `done` = file selesai di-download dan DB sudah update.
+/// Stream broadcast sehingga NusaProductImage widget bisa listen realtime
+/// tanpa restart app.
+class ImageHydrationEvent {
+  final int productId;
+  final double progress; // 0.0..1.0; -1 = done
+  final String? localPath; // null sampai done
+  const ImageHydrationEvent({
+    required this.productId,
+    required this.progress,
+    this.localPath,
+  });
+  bool get isDone => progress >= 1.0;
+}
+
 class DeltaSyncService {
   DeltaSyncService._();
   static final DeltaSyncService I = DeltaSyncService._();
@@ -55,6 +72,13 @@ class DeltaSyncService {
 
   final _controller = StreamController<DeltaEvent>.broadcast();
   Stream<DeltaEvent> get stream => _controller.stream;
+
+  // v2.2.57+140: per-product hydration progress stream — NusaProductImage
+  // widget listen agar UI update REAL-TIME tanpa restart app.
+  final _hydrationController =
+      StreamController<ImageHydrationEvent>.broadcast();
+  Stream<ImageHydrationEvent> get hydrationStream =>
+      _hydrationController.stream;
 
   AppDatabase? _db;
   bool _started = false;
@@ -1660,6 +1684,10 @@ class DeltaSyncService {
   /// tidak pernah memulihkan foto sampai restart kedua.
   /// v2.2.57+138: tambah parameter opsional onProgress(done, total) untuk
   /// update UI progress dialog "Mengunduh gambar X/N".
+  /// v2.2.57+140: tambah emit per-image hydration event ke `hydrationStream`
+  /// agar NusaProductImage bisa update REAL-TIME tanpa restart app. Progress
+  /// di-tick via Timer 100ms (0.0 → 0.9) supaya UI tidak stuck saat download
+  /// panjang; event "done" (1.0) dikirim saat download selesai.
   Future<void> hydrateAllImages({void Function(int done, int total)? onProgress}) async {
     if (_db == null) return;
     final uid = _uid ?? await SecureStore.resolveCanonicalUid();
@@ -1697,8 +1725,56 @@ class DeltaSyncService {
       onProgress?.call(done, total);
 
       // Pass 2: download per file + update DB
+      Future<String?> downloadWithProgress(
+          int productId, String category, String name) async {
+        // Emit "started" supaya UI tahu ada download berjalan (anti stuck).
+        if (!_hydrationController.isClosed) {
+          _hydrationController.add(ImageHydrationEvent(
+            productId: productId,
+            progress: 0.0,
+          ));
+        }
+        // Tick progress 0.0 → 0.9 setiap 100ms selama download — UI REAL-TIME.
+        var tickProgress = 0.0;
+        final ticker = Timer.periodic(
+          const Duration(milliseconds: 100),
+          (_) {
+            tickProgress = (tickProgress + 0.06).clamp(0.0, 0.9);
+            if (!_hydrationController.isClosed) {
+              _hydrationController.add(ImageHydrationEvent(
+                productId: productId,
+                progress: tickProgress,
+              ));
+            }
+          },
+        );
+        try {
+          final restored = await svc.downloadOriginal(category, name);
+          ticker.cancel();
+          if (!_hydrationController.isClosed) {
+            _hydrationController.add(ImageHydrationEvent(
+              productId: productId,
+              progress: 1.0,
+              localPath: restored,
+            ));
+          }
+          return restored;
+        } catch (e) {
+          ticker.cancel();
+          // -1.0 = sinyal done (UI bersihkan overlay). path null.
+          if (!_hydrationController.isClosed) {
+            _hydrationController.add(ImageHydrationEvent(
+              productId: productId,
+              progress: 1.0,
+            ));
+          }
+          return null;
+        }
+      }
+
       for (final t in productCandidates) {
-        final restored = await svc.downloadOriginal('products', t.name);
+        final restored =
+            await downloadWithProgress(t.id, 'products', t.name);
         if (restored != null) {
           await (_db!.update(_db!.products)..where((p) => p.id.equals(t.id)))
               .write(ProductsCompanion(imagePath: Value(restored)));
@@ -1708,7 +1784,8 @@ class DeltaSyncService {
         onProgress?.call(done, total);
       }
       for (final t in empCandidates) {
-        final restored = await svc.downloadOriginal('employees', t.name);
+        final restored =
+            await downloadWithProgress(t.id, 'employees', t.name);
         if (restored != null) {
           await (_db!.update(_db!.employees)..where((e) => e.id.equals(t.id)))
               .write(EmployeesCompanion(photoPath: Value(restored)));
