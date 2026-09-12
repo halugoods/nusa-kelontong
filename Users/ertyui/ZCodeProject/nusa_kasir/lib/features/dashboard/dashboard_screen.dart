@@ -21,6 +21,7 @@ import 'package:nusa_kasir/data/repositories/branch_repository.dart';
 import 'package:nusa_kasir/data/repositories/online_order_repository.dart';
 import 'package:nusa_kasir/data/repositories/product_repository.dart';
 import 'package:nusa_kasir/data/repositories/finance_repository.dart';
+import 'package:nusa_kasir/data/repositories/debt_repository.dart';
 import 'package:nusa_kasir/data/repositories/laundry_order_repository.dart';
 import 'package:nusa_kasir/data/repositories/print_order_repository.dart';import 'package:nusa_kasir/data/repositories/appointment_repository.dart';
 import 'package:nusa_kasir/data/repositories/service_ticket_repository.dart';
@@ -1019,6 +1020,29 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               ? 'Stok "$lowNames" menipis. Segera restock.'
               : '$lowStockCount produk stoknya menipis: $lowNames',
           route: '/stok',
+        );
+      }
+    } catch (_) {}
+
+    // Load debt due alerts (hutang/kasbon jatuh tempo)
+    try {
+      final debtRepo = DebtRepository(ref.read(databaseProvider));
+      final allUnpaid = await debtRepo.getActiveDebts();
+      final now = DateTime.now();
+      final dueTxs = allUnpaid.where((t) {
+        if (t.dueDate == null) return false;
+        final diff = t.dueDate!.difference(now).inDays;
+        return diff <= 3; // H-3 atau sudah lewat tempo
+      }).toList();
+      if (dueTxs.isNotEmpty) {
+        await NotificationService.add(
+          id: 'debt-due',
+          type: 'debt',
+          title: '⏳ Hutang / Piutang Jatuh Tempo',
+          body: dueTxs.length == 1
+              ? 'Ada 1 hutang/kasbon mendekati atau melebihi jatuh tempo.'
+              : 'Ada ${dueTxs.length} hutang/kasbon mendekati atau melebihi jatuh tempo.',
+          route: '/piutang',
         );
       }
     } catch (_) {}
@@ -2046,10 +2070,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                                   icon: Icons.chat_rounded,
                                   label: 'WA',
                                   color: NusaConfig.accentGreen,
-                                  onTap: () {
-                                    Navigator.pop(ctx);
-                                    _launchWa(e.phone!);
-                                  },
+                                  keepOpen: true,
+                                  onTap: () => _showStaffCallSheet(e),
                                 ),
                               const SizedBox(width: 8),
                               // Tombol PANGGIL — cloud-only (butuh internet untuk
@@ -2062,32 +2084,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                                   label: 'Panggil',
                                   color: NusaConfig.info,
                                   keepOpen: true,
-                                  onTap: () async {
-                                    try {
-                                      final session = ref.read(
-                                        employeeSessionProvider,
-                                      );
-                                      final ok = await CallService.I.call(
-                                        employeeId: e.id,
-                                        employeeName: e.name,
-                                        by: session?.name ?? 'Owner',
-                                      );
-                                      if (!ok) throw Exception();
-                                      if (ctx.mounted) {
-                                        TopToast.success(
-                                          ctx,
-                                          'Memanggil ${e.name}…',
-                                        );
-                                      }
-                                    } catch (_) {
-                                      if (ctx.mounted) {
-                                        TopToast.error(
-                                          ctx,
-                                          'Gagal memanggil (butuh internet)',
-                                        );
-                                      }
-                                    }
-                                  },
+                                  onTap: () => _showStaffCallSheet(e),
                                 ),
                             ],
                           ),
@@ -2150,6 +2147,181 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         TopToast.error(context, 'Gagal membuka WhatsApp');
       }
     }
+  }
+
+  void _showStaffCallSheet(Employee e) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final hasPhone = e.phone != null && e.phone!.trim().isNotEmpty;
+    final reasons = ['Bantu Kasir', 'Ada Pelanggan', 'Cek Stok', 'Briefing Singkat'];
+    String selectedReason = reasons.first;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Container(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            decoration: BoxDecoration(
+              color: isDark ? NusaConfig.darkSurface : NusaConfig.surfaceColor,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white24 : Colors.black12,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: NusaConfig.activePrimary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        e.name.isNotEmpty ? e.name[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: NusaConfig.activePrimary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            e.name,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          Text(
+                            e.role,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Alasan Panggilan',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? NusaConfig.darkTextSecondary : NusaConfig.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: reasons.map((r) {
+                    final sel = selectedReason == r;
+                    return ChoiceChip(
+                      label: Text(r),
+                      selected: sel,
+                      onSelected: (_) => setModalState(() => selectedReason = r),
+                      selectedColor: NusaConfig.activePrimary.withValues(alpha: 0.15),
+                      labelStyle: TextStyle(
+                        fontSize: 12,
+                        fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
+                        color: sel
+                            ? NusaConfig.activePrimary
+                            : (isDark ? NusaConfig.darkTextSecondary : NusaConfig.textSecondary),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    if (hasPhone) ...[
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(sheetCtx);
+                            final storeName = _storeName;
+                            final msg = 'Halo ${e.name}, dipanggil di kasir/toko *$storeName*.\nAlasan: *$selectedReason*';
+                            final uri = waLink(e.phone!, text: msg);
+                            launchUrl(uri, mode: LaunchMode.externalApplication);
+                          },
+                          icon: const Icon(Icons.chat_rounded, size: 18),
+                          label: const Text('Via WhatsApp'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: NusaConfig.accentGreen,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                    if (NusaConfig.cloudEnabled)
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            Navigator.pop(sheetCtx);
+                            try {
+                              final session = ref.read(employeeSessionProvider);
+                              final ok = await CallService.I.call(
+                                employeeId: e.id,
+                                employeeName: e.name,
+                                by: '${session?.name ?? "Owner"} ($selectedReason)',
+                              );
+                              if (!ok) throw Exception();
+                              if (mounted) {
+                                TopToast.success(context, 'Memanggil ${e.name}…');
+                              }
+                            } catch (_) {
+                              if (mounted) {
+                                TopToast.error(context, 'Gagal memanggil (butuh internet)');
+                              }
+                            }
+                          },
+                          icon: const Icon(Icons.notifications_active_rounded, size: 18),
+                          label: const Text('Ring App'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: NusaConfig.activePrimary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                            elevation: 0,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   /// v2.2.44 (L4): buka halaman perpanjang/beli lisensi /pay. Gateway

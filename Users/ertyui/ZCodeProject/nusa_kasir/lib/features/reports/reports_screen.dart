@@ -1278,9 +1278,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         barRods: [
           BarChartRodData(
             toY: entries[i].value.toDouble(),
-            color: NusaConfig.activePrimary.withValues(alpha: 0.85),
+            gradient: LinearGradient(
+              colors: [
+                NusaConfig.activePrimary.withValues(alpha: 0.65),
+                NusaConfig.activePrimary,
+              ],
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+            ),
             width: entries.length > 15 ? 8 : 14,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(5)),
+            borderRadius: BorderRadius.circular(6),
           ),
         ],
       );
@@ -1297,9 +1304,16 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
         barRods: [
           BarChartRodData(
             toY: entries[i].value.toDouble(),
-            color: NusaConfig.activePrimary.withValues(alpha: 0.85),
+            gradient: LinearGradient(
+              colors: [
+                NusaConfig.activePrimary.withValues(alpha: 0.65),
+                NusaConfig.activePrimary,
+              ],
+              begin: Alignment.bottomCenter,
+              end: Alignment.topCenter,
+            ),
             width: 22,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(6)),
+            borderRadius: BorderRadius.circular(8),
           ),
         ],
       );
@@ -2312,71 +2326,150 @@ class _ReportsScreenState extends ConsumerState<ReportsScreen> {
   /// v2.2.57: pipih — tipis sejajar switch card (~48px). v2.2.55 terlalu
   /// tebal karena padding bertumpuk + shadow; diringkas jadi selaras.
   Widget _employeeFilterDropdown(bool isDark) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: isDark ? NusaConfig.darkSurface2 : NusaConfig.surfaceColor,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isDark ? NusaConfig.darkBorder : NusaConfig.dividerColor,
-        ),
-      ),
-      child: DropdownButtonFormField<int>(
-        value: _employeeFilter,
-        isExpanded: true,
-        isDense: true,
-        borderRadius: BorderRadius.circular(10),
-        menuMaxHeight: 320,
-        dropdownColor:
-            isDark ? NusaConfig.darkSurface2 : NusaConfig.surfaceColor,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: isDark
-              ? NusaConfig.darkTextPrimary
-              : NusaConfig.textPrimary,
-        ),
-        icon: Icon(
-          Icons.expand_more_rounded,
-          size: 18,
-          color: isDark
-              ? NusaConfig.darkTextTertiary
-              : NusaConfig.textTertiary,
-        ),
-        items: [
-          DropdownMenuItem<int>(
-            value: null,
-            child: Text('Semua Kasir', overflow: TextOverflow.ellipsis),
+    final selectedEmp = _employees.where((e) => e.id == _employeeFilter).firstOrNull;
+    final label = selectedEmp != null ? '${selectedEmp.name} (${selectedEmp.role})' : 'Semua Kasir';
+
+    return InkWell(
+      onTap: () => _showEmployeeFilterSheet(isDark),
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDark ? NusaConfig.darkSurface2 : NusaConfig.surfaceColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isDark ? NusaConfig.darkBorder : NusaConfig.dividerColor,
           ),
-          ..._employees.map(
-            (e) => DropdownMenuItem<int>(
-              value: e.id,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.person_outline_rounded,
+              size: 18,
+              color: NusaConfig.activePrimary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
               child: Text(
-                '${e.name} (${e.role})',
+                label,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? NusaConfig.darkTextPrimary : NusaConfig.textPrimary,
+                ),
+                maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-          ),
-        ],
-        onChanged: (v) {
-          setState(() {
-            _employeeFilter = v;
-            _refreshKey++;
-          });
-        },
-        decoration: InputDecoration(
-          prefixIcon: Icon(
-            Icons.person_outline_rounded,
-            size: 18,
-            color: NusaConfig.activePrimary,
-          ),
-          hintText: 'Semua Kasir',
-          border: InputBorder.none,
-          enabledBorder: InputBorder.none,
-          focusedBorder: InputBorder.none,
-          isDense: true,
-          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 18,
+              color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEmployeeFilterSheet(bool isDark) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        decoration: BoxDecoration(
+          color: isDark ? NusaConfig.darkSurface : NusaConfig.surfaceColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white24 : Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Filter Laporan Kasir / Staf',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: isDark ? NusaConfig.darkTextPrimary : NusaConfig.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+              leading: CircleAvatar(
+                radius: 18,
+                backgroundColor: NusaConfig.activePrimary.withValues(alpha: 0.15),
+                child: Icon(Icons.people_outline_rounded, size: 20, color: NusaConfig.activePrimary),
+              ),
+              title: const Text('Semua Kasir', style: TextStyle(fontWeight: FontWeight.w600)),
+              trailing: _employeeFilter == null
+                  ? Icon(Icons.check_circle_rounded, color: NusaConfig.activePrimary)
+                  : null,
+              onTap: () {
+                setState(() {
+                  _employeeFilter = null;
+                  _refreshKey++;
+                });
+                Navigator.pop(ctx);
+              },
+            ),
+            const Divider(height: 1),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: _employees.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, idx) {
+                  final e = _employees[idx];
+                  final isSelected = _employeeFilter == e.id;
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    leading: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: NusaConfig.activePrimary.withValues(alpha: 0.12),
+                      child: Text(
+                        e.name.isNotEmpty ? e.name[0].toUpperCase() : '?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: NusaConfig.activePrimary,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    title: Text(e.name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    subtitle: Text(e.role, style: TextStyle(fontSize: 12, color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary)),
+                    trailing: isSelected
+                        ? Icon(Icons.check_circle_rounded, color: NusaConfig.activePrimary)
+                        : null,
+                    onTap: () {
+                      setState(() {
+                        _employeeFilter = e.id;
+                        _refreshKey++;
+                      });
+                      Navigator.pop(ctx);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -223,57 +223,55 @@ class _PinDialogContentState extends State<_PinDialogContent> {
 
     return Dialog(
       backgroundColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const SizedBox(height: 40),
-
-            // Lock icon — gradient circle
+            // Modern Card without redundant big lock icon
             Container(
-              width: 72,
-              height: 72,
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [NusaConfig.activePrimary, NusaConfig.activeDark],
+                color: isDark ? NusaConfig.darkSurface : Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: isDark ? NusaConfig.darkBorder : NusaConfig.dividerColor.withValues(alpha: 0.5),
+                  width: 1,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: NusaConfig.activePrimary.withValues(alpha: 0.3),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: const Icon(Icons.lock_rounded, color: Colors.white, size: 34),
-            ),
-            const SizedBox(height: 28),
-
-            // Card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: isDark ? NusaConfig.darkSurface : Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
+                    color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.08),
+                    blurRadius: 28,
+                    offset: const Offset(0, 10),
                   ),
                 ],
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // Modern Icon badge inside card
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: NusaConfig.activePrimary.withValues(alpha: isDark ? 0.2 : 0.1),
+                    ),
+                    child: Icon(
+                      Icons.pin_outlined,
+                      color: NusaConfig.activePrimary,
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
                   // Title
                   Text(
                     _displayTitle,
+                    textAlign: TextAlign.center,
                     style: TextStyle(
-                      fontSize: 20,
+                      fontSize: 18,
                       fontWeight: FontWeight.w700,
                       color: isDark ? NusaConfig.darkTextPrimary : const Color(0xFF151717),
                     ),

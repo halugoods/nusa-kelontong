@@ -32,6 +32,9 @@ import 'package:nusa_kasir/shared/widgets/empty_state.dart';
 import 'package:nusa_kasir/shared/services/nfc_tag_service.dart';
 import 'package:nusa_kasir/core/utils/wa_phone.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:nusa_kasir/core/services/id_card_renderer.dart';
+import 'package:nusa_kasir/shared/widgets/top_toast.dart';
 
 const _avatarColors = [
   Color(0xFFE63946),
@@ -1732,6 +1735,39 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
     }
   }
 
+  Future<void> _shareEmployeeCard(Employee e) async {
+    try {
+      TopToast.info(context, 'Menyiapkan kartu ID…');
+      final settingsRepo = ref.read(settingsRepoProvider);
+      final storeName = await settingsRepo.getStoreName();
+      final effectiveStoreName = storeName.isNotEmpty ? storeName : 'NUSA Store';
+      final cardWidget = IdCardRenderer.employeeCard(
+        storeName: effectiveStoreName,
+        name: e.name,
+        role: e.role,
+        id: e.id,
+        barcode: e.barcode ?? 'EMP-${e.id}',
+        phone: e.phone,
+        photoBytes: photoToImage(e.photoPath),
+      );
+      final file = await IdCardRenderer.renderSingle(
+        card: cardWidget,
+        fileName: 'kartu_${e.name.toLowerCase().replaceAll(' ', '_')}',
+      );
+      if (mounted) {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path)],
+            subject: 'Kartu ID - ${e.name}',
+            text: 'Kartu ID Karyawan ${e.name} (${e.role}) - $effectiveStoreName',
+          ),
+        );
+      }
+    } catch (err) {
+      if (mounted) TopToast.error(context, 'Gagal membuat kartu ID: $err');
+    }
+  }
+
   Future<void> _openWA(Employee e) async {
     if (e.phone == null || e.phone!.isEmpty) return;
     // Normalisasi via helper (v2.2.35): 08xx → 628xx.
@@ -2299,10 +2335,21 @@ class _EmployeesScreenState extends ConsumerState<EmployeesScreen> {
                                           ? NusaConfig.darkSurface
                                           : null,
                                       onSelected: (v) {
+                                        if (v == 'card') _shareEmployeeCard(e);
                                         if (v == 'edit') _showForm(employee: e);
                                         if (v == 'delete') _delete(e);
                                       },
                                       itemBuilder: (_) => [
+                                        PopupMenuItem(
+                                          value: 'card',
+                                          child: Row(
+                                            children: [
+                                              Icon(Icons.badge_outlined, size: 16, color: NusaConfig.activePrimary),
+                                              const SizedBox(width: 8),
+                                              const Text('Cetak Kartu ID'),
+                                            ],
+                                          ),
+                                        ),
                                         PopupMenuItem(
                                           value: 'edit',
                                           child: Text('Edit'),

@@ -1627,72 +1627,107 @@ class _PosScreenState extends ConsumerState<PosScreen> {
     );
   }
 
-  // ── Cart Bar (collapsed, narrow only) ──
+  // ── Floating Cart Island (collapsed, narrow only) ──
 
   Widget _buildCartBar(bool isDark, int totalItems, int totalPrice) {
+    if (totalItems == 0) return const SizedBox.shrink();
     return GestureDetector(
-      onTap: totalItems > 0 ? () => setState(() => _cartExpanded = true) : null,
+      onTap: () => setState(() => _cartExpanded = true),
       child: Container(
-        margin: EdgeInsets.fromLTRB(12, 4, 12, 12),
-        padding: EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(NusaConfig.radiusXL),
+          borderRadius: BorderRadius.circular(24),
           gradient: LinearGradient(
-            colors: [NusaConfig.activePrimary, NusaConfig.activeDark],
+            colors: [
+              NusaConfig.activePrimary,
+              NusaConfig.activeDark,
+            ],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
           boxShadow: [
             BoxShadow(
-              color: NusaConfig.activePrimary.withValues(alpha: 0.35),
-              blurRadius: 16,
-              offset: Offset(0, 6),
+              color: NusaConfig.activePrimary.withValues(alpha: 0.4),
+              blurRadius: 20,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
         child: Row(
           children: [
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$totalItems item',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withValues(alpha: 0.85),
+            // Floating bounce badge
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.22),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 16),
+                  const SizedBox(width: 5),
+                  Text(
+                    '$totalItems',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
                   ),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  formatRupiah(totalPrice),
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: -0.5,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-            Spacer(),
-            if (totalItems > 0)
-              Icon(Icons.keyboard_arrow_up, color: Colors.white70, size: 28),
-            SizedBox(width: 8),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Total Tagihan',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.white.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    formatRupiah(totalPrice),
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.keyboard_arrow_up_rounded, color: Colors.white70, size: 24),
+            const SizedBox(width: 8),
             ElevatedButton(
-              onPressed: totalItems == 0 ? null : () => _goToCheckout(),
+              onPressed: () => _goToCheckout(),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: NusaConfig.activePrimary,
-                disabledBackgroundColor: Colors.white38,
-                disabledForegroundColor: Colors.white54,
                 elevation: 0,
-                padding: EdgeInsets.symmetric(horizontal: 28, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                textStyle: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
               ),
-              child: Text('Bayar'),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Bayar'),
+                  SizedBox(width: 4),
+                  Icon(Icons.arrow_forward_rounded, size: 16),
+                ],
+              ),
             ),
           ],
         ),

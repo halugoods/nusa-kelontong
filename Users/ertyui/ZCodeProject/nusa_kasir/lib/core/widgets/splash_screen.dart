@@ -1,23 +1,16 @@
 import 'package:flutter/material.dart';
 import '../config/nusa_config.dart';
 import '../utils/icon_loader.dart';
-import 'package:nusa_kasir/shared/widgets/animated_builder.dart'
-    show NusaAnimatedBuilder;
 
-/// Splash screen — dynamic variant logo + "NUSA" title + subtitle + bouncing dots.
-///
-/// The logo PNG is selected from the active theme colour via [splashLogoPath].
-/// A "NUSA" title and "by Halu Goods Indonesia" subtitle are rendered below.
-/// The 3-dot bouncing animation is layered at the bottom.
-/// After ~2.5 seconds, calls [onDone].
+/// Kinetic Splash Screen — Signature fluid entrance with ambient glow halo & horizon progress.
 class SplashScreen extends StatefulWidget {
   final void Function(BuildContext context) onDone;
   final Duration duration;
 
-  SplashScreen({
+  const SplashScreen({
     super.key,
     required this.onDone,
-    this.duration = const Duration(milliseconds: 2500),
+    this.duration = const Duration(milliseconds: 2400),
   });
 
   @override
@@ -29,8 +22,14 @@ class _SplashScreenState extends State<SplashScreen>
   late final AnimationController _fadeCtrl;
   late final Animation<double> _fadeAnim;
 
-  late final List<AnimationController> _dotCtrls;
-  late final List<Animation<double>> _dotAnims;
+  late final AnimationController _scaleCtrl;
+  late final Animation<double> _scaleAnim;
+
+  late final AnimationController _glowCtrl;
+  late final Animation<double> _glowAnim;
+
+  late final AnimationController _progressCtrl;
+  late final Animation<double> _progressAnim;
 
   @override
   void initState() {
@@ -38,32 +37,32 @@ class _SplashScreenState extends State<SplashScreen>
 
     _fadeCtrl = AnimationController(
       vsync: this,
-      duration: Duration(milliseconds: 600),
+      duration: const Duration(milliseconds: 600),
     );
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeIn);
     _fadeCtrl.forward();
 
-    // Bouncing dots — staggered loop
-    _dotCtrls = List.generate(3, (i) {
-      return AnimationController(
-        vsync: this,
-        duration: Duration(milliseconds: 600),
-      );
-    });
-    _dotAnims = List.generate(3, (i) {
-      return Tween<double>(begin: 0, end: -12).animate(
-        CurvedAnimation(
-          parent: _dotCtrls[i],
-          curve: Interval(0, 0.5, curve: Curves.easeOut),
-        ),
-      );
-    });
+    _scaleCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    );
+    _scaleAnim = CurvedAnimation(parent: _scaleCtrl, curve: Curves.elasticOut);
+    _scaleCtrl.forward();
 
-    for (var i = 0; i < 3; i++) {
-      Future.delayed(Duration(milliseconds: i * 150), () {
-        _startDotLoop(i);
-      });
-    }
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _glowAnim = Tween<double>(begin: 0.85, end: 1.15).animate(
+      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
+
+    _progressCtrl = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: widget.duration.inMilliseconds - 400),
+    );
+    _progressAnim = CurvedAnimation(parent: _progressCtrl, curve: Curves.easeInOutCubic);
+    _progressCtrl.forward();
 
     Future.delayed(widget.duration, () {
       if (mounted) {
@@ -74,20 +73,12 @@ class _SplashScreenState extends State<SplashScreen>
     });
   }
 
-  void _startDotLoop(int i) {
-    if (!mounted) return;
-    _dotCtrls[i]
-        .forward()
-        .then((_) => _dotCtrls[i].reverse())
-        .then((_) => _startDotLoop(i));
-  }
-
   @override
   void dispose() {
     _fadeCtrl.dispose();
-    for (final c in _dotCtrls) {
-      c.dispose();
-    }
+    _scaleCtrl.dispose();
+    _glowCtrl.dispose();
+    _progressCtrl.dispose();
     super.dispose();
   }
 
@@ -104,28 +95,66 @@ class _SplashScreenState extends State<SplashScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // Centered logo + text block
+            // Ambient pulsating back glow
+            AnimatedBuilder(
+              animation: _glowAnim,
+              builder: (context, child) {
+                return Center(
+                  child: Container(
+                    width: 280 * _glowAnim.value,
+                    height: 280 * _glowAnim.value,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          primary.withValues(alpha: isDark ? 0.22 : 0.15),
+                          primary.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            // Centered kinetic logo + branding
             Center(
               child: Padding(
-                padding:
-                    EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // ── Logo (dynamic by theme) ──
-                    Image.asset(
-                      logoAsset,
-                      width: 120,
-                      height: 120,
-                      fit: BoxFit.contain,
+                    ScaleTransition(
+                      scale: _scaleAnim,
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? NusaConfig.darkSurface
+                              : Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: primary.withValues(alpha: 0.2),
+                              blurRadius: 28,
+                              offset: const Offset(0, 10),
+                            ),
+                          ],
+                        ),
+                        child: Image.asset(
+                          logoAsset,
+                          width: 88,
+                          height: 88,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
                     ),
-                    SizedBox(height: 24),
-                    // ── NUSA ──
+                    const SizedBox(height: 24),
                     Text(
                       'NUSA',
                       style: TextStyle(
                         fontFamily: 'Poppins',
-                        fontSize: 36,
+                        fontSize: 34,
                         fontWeight: FontWeight.w800,
                         letterSpacing: 4,
                         decoration: TextDecoration.none,
@@ -134,8 +163,7 @@ class _SplashScreenState extends State<SplashScreen>
                             : NusaConfig.textPrimary,
                       ),
                     ),
-                    SizedBox(height: 6),
-                    // ── by Halu Goods Indonesia ──
+                    const SizedBox(height: 6),
                     Text(
                       'by Halu Goods Indonesia',
                       style: TextStyle(
@@ -153,34 +181,32 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ),
             ),
-            // Bouncing dots at bottom
+
+            // Horizon Progress Bar at bottom
             Positioned(
-              bottom: 60,
-              left: 0,
-              right: 0,
-              child: Row(
+              bottom: 48,
+              left: 64,
+              right: 64,
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(3, (i) {
-                  return NusaAnimatedBuilder(
-                    animation: _dotAnims[i],
-                    builder: (context, child) {
-                      return Transform.translate(
-                        offset: Offset(0, _dotAnims[i].value),
-                        child: child,
-                      );
-                    },
-                    child: Container(
-                      width: 10,
-                      height: 10,
-                      margin: EdgeInsets.symmetric(horizontal: 5),
-                      decoration: BoxDecoration(
-                        color: primary,
-                        shape: BoxShape.circle,
-                      ),
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: AnimatedBuilder(
+                      animation: _progressAnim,
+                      builder: (context, child) {
+                        return LinearProgressIndicator(
+                          value: _progressAnim.value,
+                          backgroundColor: isDark
+                              ? NusaConfig.darkSurface
+                              : primary.withValues(alpha: 0.12),
+                          valueColor: AlwaysStoppedAnimation<Color>(primary),
+                          minHeight: 3.5,
+                        );
+                      },
                     ),
-                  );
-                }),
+                  ),
+                ],
               ),
             ),
           ],

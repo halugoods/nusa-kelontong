@@ -49,15 +49,41 @@ class DashboardHeader extends StatelessWidget {
               children: [
                 Image.asset(splashLogoPath(), height: 40, fit: BoxFit.contain),
                 SizedBox(width: 10),
-                Text(
-                  'NUSA',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                    color: NusaConfig.activePrimary,
-                    height: 1,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'NUSA',
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.5,
+                        color: NusaConfig.activePrimary,
+                        height: 1,
+                      ),
+                    ),
+                    if (branchName != null && branchName!.isNotEmpty) ...[
+                      SizedBox(height: 3),
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: NusaConfig.activePrimary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          branchName!,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: NusaConfig.activePrimary,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
@@ -115,37 +141,14 @@ class DashboardHeader extends StatelessWidget {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(22),
                 ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Icon(
-                      Icons.store_mall_directory_outlined,
-                      size: 22,
-                      color: isDark
-                          ? NusaConfig.darkTextPrimary
-                          : NusaConfig.textPrimary,
-                    ),
-                    // Dot indikator cabang aktif (bukan "Semua Cabang").
-                    if (branchName != null && branchName!.isNotEmpty)
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Container(
-                          width: 9,
-                          height: 9,
-                          decoration: BoxDecoration(
-                            color: NusaConfig.accentGreen,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isDark
-                                  ? NusaConfig.darkSurface
-                                  : NusaConfig.surfaceColor,
-                              width: 1.5,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
+                child: Center(
+                  child: Icon(
+                    Icons.storefront_rounded,
+                    size: 22,
+                    color: isDark
+                        ? NusaConfig.darkTextPrimary
+                        : NusaConfig.textPrimary,
+                  ),
                 ),
               ),
             ),

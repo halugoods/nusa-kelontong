@@ -39,6 +39,9 @@ import 'package:nusa_kasir/core/providers/update_progress_provider.dart';
 import 'package:nusa_kasir/data/repositories/attendance_repository.dart';
 import 'package:nusa_kasir/features/auth/employee_session_provider.dart';
 import 'package:nusa_kasir/core/auth/employee_session.dart';
+import 'package:nusa_kasir/core/services/id_card_renderer.dart';
+import 'package:nusa_kasir/data/repositories/customer_repository.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:nusa_kasir/shared/services/biometric_service.dart';
 import 'package:nusa_kasir/shared/services/nfc_tag_service.dart';
 import 'package:nusa_kasir/shared/services/auth_methods.dart';
@@ -2035,41 +2038,242 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   // ── Receipt Settings ──────────────────────────────────────
 
-  /// Dialog "Dalam Pengembangan" — dipakai fitur yang masih draft (v2.2.46:
-  /// Kartu ID). Memberi tahu user fitur lagi dikerjakan, bukan hilang.
-  void _showUnderDevelopment(BuildContext ctx, String featureName) {
-    showDialog<void>(
+  void _showIdCardHub(BuildContext ctx) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    showModalBottomSheet(
       context: ctx,
-      builder: (dctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetCtx) => Container(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 28),
+        decoration: BoxDecoration(
+          color: isDark ? NusaConfig.darkSurface : NusaConfig.surfaceColor,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.construction, color: NusaConfig.accentGold, size: 22),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                featureName,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+            Center(
+              child: Container(
+                width: 38,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: isDark ? Colors.white24 : Colors.black12,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: NusaConfig.activePrimary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.badge_outlined, color: NusaConfig.activePrimary, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Hub Cetak Kartu ID',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        'Format Standar CR80 (85.6 × 54 mm)',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _idCardHubTile(
+              icon: Icons.badge_rounded,
+              title: 'Cetak Batch Kartu Karyawan',
+              subtitle: 'Generate PDF A4 siap print untuk semua staf aktif',
+              isDark: isDark,
+              onTap: () async {
+                Navigator.pop(sheetCtx);
+                _generateBatchEmployeeCards();
+              },
+            ),
+            const SizedBox(height: 10),
+            _idCardHubTile(
+              icon: Icons.card_membership_rounded,
+              title: 'Cetak Batch Kartu Member',
+              subtitle: 'Generate PDF A4 siap print untuk semua pelanggan',
+              isDark: isDark,
+              onTap: () async {
+                Navigator.pop(sheetCtx);
+                _generateBatchCustomerCards();
+              },
+            ),
           ],
         ),
-        content: const Text(
-          'Fitur ini masih dalam pengembangan.\n'
-          'Desain sedang disiapkan — nantikan di update berikutnya.',
-          style: TextStyle(fontSize: 13, height: 1.5),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dctx),
-            child: const Text('Oke'),
-          ),
-        ],
       ),
     );
+  }
+
+  Widget _idCardHubTile({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool isDark,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isDark ? NusaConfig.darkSurface2 : NusaConfig.backgroundColor,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: isDark ? NusaConfig.darkBorder : NusaConfig.borderColor,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: NusaConfig.activePrimary.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: NusaConfig.activePrimary, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: isDark ? Colors.white54 : Colors.black45),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _generateBatchEmployeeCards() async {
+    try {
+      TopToast.info(context, 'Menyiapkan PDF kartu karyawan…');
+      final db = ref.read(databaseProvider);
+      final repo = AttendanceRepository(db);
+      final settingsRepo = ref.read(settingsRepoProvider);
+      final storeName = await settingsRepo.getStoreName();
+      final effectiveStoreName = storeName.isNotEmpty ? storeName : 'NUSA Store';
+      final emps = await repo.getEmployees();
+      if (emps.isEmpty) {
+        if (mounted) TopToast.info(context, 'Belum ada data karyawan');
+        return;
+      }
+      final cards = emps.map((e) {
+        return IdCardRenderer.employeeCard(
+          storeName: effectiveStoreName,
+          name: e.name,
+          role: e.role,
+          id: e.id,
+          barcode: e.barcode ?? 'EMP-${e.id}',
+          phone: e.phone,
+          photoBytes: photoToImage(e.photoPath),
+        );
+      }).toList();
+
+      final List<List<dynamic>> pages = [];
+      for (var i = 0; i < cards.length; i += 8) {
+        pages.add(cards.sublist(i, (i + 8 > cards.length) ? cards.length : i + 8));
+      }
+
+      final file = await IdCardRenderer.renderBatch(
+        pages: pages.cast(),
+        fileName: 'kartu_karyawan_${DateTime.now().millisecondsSinceEpoch}',
+      );
+
+      if (mounted) {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path)],
+            subject: 'Kartu ID Karyawan - $effectiveStoreName',
+            text: 'PDF Kartu ID Karyawan siap cetak format A4',
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) TopToast.error(context, 'Gagal membuat PDF kartu: $e');
+    }
+  }
+
+  Future<void> _generateBatchCustomerCards() async {
+    try {
+      TopToast.info(context, 'Menyiapkan PDF kartu member…');
+      final db = ref.read(databaseProvider);
+      final repo = CustomerRepository(db);
+      final settingsRepo = ref.read(settingsRepoProvider);
+      final storeName = await settingsRepo.getStoreName();
+      final effectiveStoreName = storeName.isNotEmpty ? storeName : 'NUSA Store';
+      final custs = await repo.getCustomers();
+      if (custs.isEmpty) {
+        if (mounted) TopToast.info(context, 'Belum ada data member');
+        return;
+      }
+      final cards = custs.map((c) {
+        return IdCardRenderer.memberCard(
+          storeName: effectiveStoreName,
+          name: c.name,
+          level: c.level,
+          points: c.points,
+          barcode: c.barcode ?? 'MBR-${c.id}',
+          phone: c.phone,
+        );
+      }).toList();
+
+      final List<List<dynamic>> pages = [];
+      for (var i = 0; i < cards.length; i += 8) {
+        pages.add(cards.sublist(i, (i + 8 > cards.length) ? cards.length : i + 8));
+      }
+
+      final file = await IdCardRenderer.renderBatch(
+        pages: pages.cast(),
+        fileName: 'kartu_member_${DateTime.now().millisecondsSinceEpoch}',
+      );
+
+      if (mounted) {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path)],
+            subject: 'Kartu Member - $storeName',
+            text: 'PDF Kartu Member siap cetak format A4',
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) TopToast.error(context, 'Gagal membuat PDF kartu: $e');
+    }
   }
 
   Future<void> _showReceiptSettings() async {
@@ -3648,9 +3852,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 _menuTile(
                   icon: Icons.badge_outlined,
                   title: 'Kartu ID',
-                  subtitle: 'Cetak kartu member & karyawan (segera hadir)',
+                  subtitle: 'Cetak kartu member & karyawan siap print',
                   isDark: isDark,
-                  onTap: () => _showUnderDevelopment(context, 'Kartu ID'),
+                  onTap: () => _showIdCardHub(context),
                 ),
                 _menuTile(
                   icon: Icons.payment,

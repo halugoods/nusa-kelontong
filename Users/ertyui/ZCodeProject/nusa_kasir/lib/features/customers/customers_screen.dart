@@ -23,6 +23,8 @@ import 'package:nusa_kasir/shared/widgets/skeleton_list.dart';
 import 'package:nusa_kasir/shared/widgets/empty_state.dart';
 import 'package:nusa_kasir/shared/widgets/top_toast.dart';
 import 'package:nusa_kasir/core/utils/wa_phone.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:nusa_kasir/core/services/id_card_renderer.dart';
 
 /// 6 random avatar colors picked from hash of customer name.
 const _avatarColors = [
@@ -1212,23 +1214,41 @@ class _CustomerDetailSheet extends StatelessWidget {
               );
             },
           ),
-          SizedBox(height: 24),
-          if (phone.isNotEmpty)
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _openWhatsApp(context, phone),
-                icon: Icon(Icons.chat_rounded, size: 18),
-                label: Text('Kirim WA'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Color(0xFF25D366),
-                  side: BorderSide(color: Color(0xFF25D366)),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  padding: EdgeInsets.symmetric(vertical: 14),
+          SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _shareMemberCard(context, c),
+                  icon: Icon(Icons.badge_outlined, size: 18),
+                  label: Text('Cetak Kartu'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: NusaConfig.activePrimary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    padding: EdgeInsets.symmetric(vertical: 14),
+                    elevation: 0,
+                  ),
                 ),
               ),
-            ),
+              if (phone.isNotEmpty) ...[
+                SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => _openWhatsApp(context, phone),
+                    icon: Icon(Icons.chat_rounded, size: 18),
+                    label: Text('Kirim WA'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Color(0xFF25D366),
+                      side: BorderSide(color: Color(0xFF25D366)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      padding: EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
           // Salon booking history
           if (NusaConfig.isSalonVariant) ...[
             SizedBox(height: 24),
@@ -1323,6 +1343,37 @@ class _CustomerDetailSheet extends StatelessWidget {
         ]),
       ),
     );
+  }
+
+  Future<void> _shareMemberCard(BuildContext context, Customer c) async {
+    try {
+      TopToast.info(context, 'Menyiapkan kartu member…');
+      final repo = SettingsRepository(db);
+      final storeName = await repo.getStoreName();
+      final cardWidget = IdCardRenderer.memberCard(
+        storeName: storeName.isNotEmpty ? storeName : 'NUSA Store',
+        name: c.name,
+        level: c.level,
+        points: c.points,
+        barcode: c.barcode ?? 'MBR-${c.id}',
+        phone: c.phone,
+      );
+      final file = await IdCardRenderer.renderSingle(
+        card: cardWidget,
+        fileName: 'kartu_member_${c.name.toLowerCase().replaceAll(' ', '_')}',
+      );
+      if (context.mounted) {
+        await SharePlus.instance.share(
+          ShareParams(
+            files: [XFile(file.path)],
+            subject: 'Kartu Member - ${c.name}',
+            text: 'Kartu Member ${c.name} (${c.level}) - $storeName',
+          ),
+        );
+      }
+    } catch (err) {
+      if (context.mounted) TopToast.error(context, 'Gagal membuat kartu member: $err');
+    }
   }
 
   Future<void> _openWhatsApp(BuildContext context, String phone) async {

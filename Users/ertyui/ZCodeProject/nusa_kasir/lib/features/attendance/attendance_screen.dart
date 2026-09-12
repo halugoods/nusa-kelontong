@@ -178,14 +178,14 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen>
   }
 
   String _statusLabel(AttendanceData? att, Employee? emp) {
-    if (att == null) return 'Belum';
-    if (att.status == 'Izin' || att.status == 'Sakit') return 'Izin';
-    if (att.checkOut != null) return 'Selesai';
+    if (att == null) return 'Belum Hadir';
+    if (att.status == 'Izin' || att.status == 'Sakit') return 'Izin/Sakit';
+    if (att.checkOut != null) return 'Hadir Lengkap';
     if (att.checkIn != null) {
       if (_isLate(att.checkIn!, emp)) return 'Terlambat';
-      return 'Aktif';
+      return 'Sedang Bekerja';
     }
-    return 'Belum';
+    return 'Belum Hadir';
   }
 
   // ── Bottom sheet: Absen Masuk / Pulang (PIN popup on submit) ──────
@@ -1120,26 +1120,51 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen>
 
         SizedBox(height: 14),
 
-        // ── Row 4: Action buttons (text-only, clean) ──
+        // ── Row 4: Action buttons (Single Primary Smart Action + Quick Actions) ──
         Row(children: [
           Expanded(
-            child: _textBtn('Masuk', NusaConfig.accentGreen,
-                enabled: !isCheckedIn && !isIzin,
-                onTap: () => _showAbsenSheet(e, isCheckIn: true)),
-          ),
-          SizedBox(width: 8),
-          Expanded(
-            child: _textBtn('Pulang', Color(0xFFEF4444),
-                enabled: isCheckedIn && !isCheckedOut && !isIzin,
-                onTap: () => _showAbsenSheet(e, isCheckIn: false)),
+            child: SizedBox(
+              height: 42,
+              child: ElevatedButton.icon(
+                onPressed: isIzin
+                    ? null
+                    : (!isCheckedIn
+                        ? () => _showAbsenSheet(e, isCheckIn: true)
+                        : (!isCheckedOut
+                            ? () => _showAbsenSheet(e, isCheckIn: false)
+                            : null)),
+                icon: Icon(
+                  !isCheckedIn
+                      ? Icons.login_rounded
+                      : (!isCheckedOut ? Icons.logout_rounded : Icons.check_circle_rounded),
+                  size: 18,
+                ),
+                label: Text(
+                  !isCheckedIn
+                      ? 'Absen Masuk'
+                      : (!isCheckedOut ? 'Absen Pulang' : 'Hadir Lengkap'),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: !isCheckedIn
+                      ? NusaConfig.accentGreen
+                      : (!isCheckedOut ? Color(0xFFEF4444) : (isDark ? NusaConfig.darkSurface2 : Color(0xFFE2E8F0))),
+                  foregroundColor: (!isCheckedIn || !isCheckedOut)
+                      ? Colors.white
+                      : (isDark ? NusaConfig.darkTextSecondary : NusaConfig.textSecondary),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+              ),
+            ),
           ),
           if (isOwner && !isCheckedIn && !isIzin) ...[
-            SizedBox(width: 6),
-            _iconBtn(Icons.event_busy_rounded, 'Izin', () => _showIzinSheet(e)),
+            SizedBox(width: 8),
+            _iconBtn(Icons.event_busy_rounded, 'Izin/Sakit', () => _showIzinSheet(e)),
           ],
           if (isOwner && hasPhone && !isCheckedIn && !isIzin) ...[
-            SizedBox(width: 6),
-            _iconBtn(Icons.notifications_active, 'WA', () => _sendWAReminder(e)),
+            SizedBox(width: 8),
+            _iconBtn(Icons.chat_bubble_outline_rounded, 'Kirim WA', () => _sendWAReminder(e)),
           ],
         ]),
       ]),

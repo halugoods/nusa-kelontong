@@ -249,47 +249,74 @@ class _KategoriListScreenState extends ConsumerState<KategoriListScreen> {
                         onTap: () => context.push('/produk/kategori/$cat'),
                         onLongPress: () => _showCategoryMenu(cat),
                         child: Container(
+                          padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(NusaConfig.radiusXL),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: gradient,
+                            color: isDark ? NusaConfig.darkSurface : Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isDark ? NusaConfig.darkBorder : NusaConfig.dividerColor.withValues(alpha: 0.7),
+                              width: 1,
                             ),
-                            boxShadow: [BoxShadow(
-                              color: gradient.last.withValues(alpha: 0.5),
-                              blurRadius: 12, offset: Offset(0, 4))],
-                          ),
-                          child: Stack(
-                            children: [
-                              Positioned(
-                                right: -10, top: -10,
-                                child: Opacity(opacity: 0.2,
-                                  child: Text(emoji, style: TextStyle(fontSize: 72))),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                                blurRadius: 12,
+                                offset: const Offset(0, 4),
                               ),
-                              Padding(
-                                padding: EdgeInsets.all(NusaConfig.spaceLG),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    Text(emoji, style: TextStyle(fontSize: 32)),
-                                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                      Text(cat, style: TextStyle(
-                                        fontSize: 18, fontWeight: FontWeight.w800, color: isDark ? NusaConfig.darkTextPrimary : NusaConfig.textPrimary,
-                                        letterSpacing: -0.3)),
-                                      SizedBox(height: 2),
-                                      Container(
-                                        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withValues(alpha: 0.08),
-                                          borderRadius: BorderRadius.circular(NusaConfig.radiusFull)),
-                                        child: Text('$count produk',
-                                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: isDark ? NusaConfig.darkTextSecondary : NusaConfig.textSecondary)),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: NusaConfig.activePrimary.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Center(
+                                      child: Text(
+                                        emoji,
+                                        style: const TextStyle(fontSize: 22),
                                       ),
-                                    ]),
-                                  ],
-                                ),
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.arrow_forward_ios_rounded,
+                                    size: 14,
+                                    color: isDark ? NusaConfig.darkTextTertiary : NusaConfig.textTertiary,
+                                  ),
+                                ],
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    cat,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                      color: isDark ? NusaConfig.darkTextPrimary : NusaConfig.textPrimary,
+                                      letterSpacing: -0.3,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '$count Produk',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                      color: NusaConfig.activePrimary,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
